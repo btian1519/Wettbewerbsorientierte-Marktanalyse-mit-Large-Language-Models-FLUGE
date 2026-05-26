@@ -1,0 +1,19 @@
+# Copy this file to .env (or set as system env vars)
+
+# OpenSky (optional but recommended)
+OPENSKY_USERNAME=
+OPENSKY_PASSWORD=
+
+# Amadeus Self-Service API
+AMADEUS_CLIENT_ID=
+AMADEUS_CLIENT_SECRET=
+
+# Aviationstack
+AVIATIONSTACK_API_KEY=
+# Legacy alias still supported by code
+AVIATIONSTACK_KEY=
+
+# AirLabs
+AIRLABS_API_KEY=
+# Legacy alias still supported by code
+AIRLABS_KEY=
