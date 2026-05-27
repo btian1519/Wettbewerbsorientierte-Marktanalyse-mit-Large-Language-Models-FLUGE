@@ -71,7 +71,19 @@ with st.sidebar:
         origin = st.text_input("Departure Airport (IATA)", value="FRA", max_chars=3).strip().upper()
         destination = st.text_input("Arrival Airport (IATA)", value="LHR", max_chars=3).strip().upper()
         departure_date = st.date_input("Departure Date", value=date(2026, 6, 15))
+        return_date = st.date_input("Return Date (Check24)", value=date(2026, 6, 22))
         adults = st.number_input("Passengers", min_value=1, max_value=9, value=1, step=1)
+        check24_cabin = st.selectbox(
+            "Check24 Cabin",
+            [
+                ("EPBF", "Economy"),
+                ("BUBF", "Business"),
+                ("PEBF", "Premium Economy"),
+                ("FCBF", "First Class"),
+            ],
+            index=0,
+            format_func=lambda item: item[1],
+        )
 
     with st.expander("Data Source Status", expanded=False):
         st.markdown(f"**Available Data Sources:** {sum(available_sources.values())}/{len(available_sources)}")
@@ -83,6 +95,10 @@ with st.sidebar:
             st.caption("ℹ️ Aviationstack free plan has a low monthly request limit")
         if not available_sources.get("airlabs"):
             st.caption("⚠️ AirLabs: API key not configured (AIRLABS_API_KEY)")
+        if not available_sources.get("check24"):
+            st.caption("⚠️ Check24: Playwright not installed or not available in this environment")
+        else:
+            st.caption("ℹ️ Check24: browser automation scraper for price, stops, duration, baggage, and airline offer data")
 
     st.divider()
     st.caption("Tip: For client demos, keep only Region and click Collect Data Now.")
@@ -96,7 +112,9 @@ if run:
         origin=origin,
         destination=destination,
         departure_date=departure_date.isoformat(),
+        return_date=return_date.isoformat(),
         adults=int(adults),
+        check24_cabin=check24_cabin[0],
         dep_iata=origin,
         arr_iata=destination,
         eurostat_dataset="",
@@ -112,6 +130,7 @@ if run:
         use_amadeus=available_sources.get("amadeus", False),
         use_aviationstack=available_sources.get("aviationstack", False),
         use_airlabs=available_sources.get("airlabs", False),
+        use_check24=available_sources.get("check24", False),
     )
 
     with st.spinner("Collecting market data..."):

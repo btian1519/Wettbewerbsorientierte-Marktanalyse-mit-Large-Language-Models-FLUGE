@@ -1,0 +1,64 @@
+{
+  "departure_date": "2026-06-16",
+  "return_date": "2026-06-23",
+  "adults": 1,
+  "max_offers": 5,
+  "requested_ods": 5,
+  "results": [
+    {
+      "od": "LHR-JFK",
+      "origin": "LHR",
+      "destination": "JFK",
+      "current_global_od_flights": 138.0,
+      "row_count": 28,
+      "status": "ok",
+      "records": 5,
+      "path": "C:\\AAA_RWTH\\Wettbewerbsorientierte Marktanalyse mit Large Language Models-FLUGE\\data\\raw\\check24\\20260526T215851Z.json",
+      "error": ""
+    },
+    {
+      "od": "MAD-BCN",
+      "origin": "MAD",
+      "destination": "BCN",
+      "current_global_od_flights": 109.0,
+      "row_count": 53,
+      "status": "ok",
+      "records": 5,
+      "path": "C:\\AAA_RWTH\\Wettbewerbsorientierte Marktanalyse mit Large Language Models-FLUGE\\data\\raw\\check24\\20260526T215900Z.json",
+      "error": ""
+    },
+    {
+      "od": "FRA-MUC",
+      "origin": "FRA",
+      "destination": "MUC",
+      "current_global_od_flights": 109.0,
+      "row_count": 31,
+      "status": "ok",
+      "records": 5,
+      "path": "C:\\AAA_RWTH\\Wettbewerbsorientierte Marktanalyse mit Large Language Models-FLUGE\\data\\raw\\check24\\20260526T215909Z.json",
+      "error": ""
+    },
+    {
+      "od": "FCO-MAD",
+      "origin": "FCO",
+      "destination": "MAD",
+      "current_global_od_flights": 108.0,
+      "row_count": 24,
+      "status": "ok",
+      "records": 5,
+      "path": "C:\\AAA_RWTH\\Wettbewerbsorientierte Marktanalyse mit Large Language Models-FLUGE\\data\\raw\\check24\\20260526T215918Z.json",
+      "error": ""
+    },
+    {
+      "od": "MAD-FCO",
+      "origin": "MAD",
+      "destination": "FCO",
+      "current_global_od_flights": 107.0,
+      "row_count": 26,
+      "status": "ok",
+      "records": 5,
+      "path": "C:\\AAA_RWTH\\Wettbewerbsorientierte Marktanalyse mit Large Language Models-FLUGE\\data\\raw\\check24\\20260526T215927Z.json",
+      "error": ""
+    }
+  ]
+}

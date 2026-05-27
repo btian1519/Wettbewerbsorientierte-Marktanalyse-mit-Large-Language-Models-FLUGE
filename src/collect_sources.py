@@ -1,9 +1,11 @@
 import argparse
 import json
+import importlib.util
 import os
+import re
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlencode
@@ -78,6 +80,7 @@ def get_available_sources() -> Dict[str, bool]:
         "amadeus": check_credential("AMADEUS_CLIENT_ID") and check_credential("AMADEUS_CLIENT_SECRET"),
         "aviationstack": bool(get_env_first("AVIATIONSTACK_API_KEY", "AVIATIONSTACK_KEY")),
         "airlabs": bool(get_env_first("AIRLABS_API_KEY", "AIRLABS_KEY")),
+        "check24": importlib.util.find_spec("playwright.sync_api") is not None,
     }
 
 
@@ -86,7 +89,10 @@ class CollectConfig:
     origin: str = "FRA"
     destination: str = "LHR"
     departure_date: str = "2026-06-15"
+    return_date: str = "2026-06-22"
     adults: int = 1
+    check24_cabin: str = "EPBF"
+    check24_max_offers: int = 10
 
     dep_iata: str = "FRA"
     arr_iata: str = "LHR"
@@ -106,6 +112,7 @@ class CollectConfig:
     use_amadeus: bool = True
     use_aviationstack: bool = True
     use_airlabs: bool = True
+    use_check24: bool = True
 
 
 def utc_now() -> str:
@@ -147,6 +154,170 @@ def http_post_form_json(url: str, form: Dict[str, str], headers: Optional[Dict[s
     with urlopen(req, timeout=timeout) as resp:
         body = resp.read().decode("utf-8")
         return json.loads(body)
+
+
+def _parse_eur_amount(value: str) -> float:
+    text = str(value or "").replace("\xa0", " ").replace("€", "").strip()
+    text = text.replace(".", "").replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
+        return 0.0
+
+
+def _normalize_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "").replace("\xa0", " ")).strip()
+
+
+def _safe_locator_text(locator: Any) -> str:
+    try:
+        if locator.count() > 0:
+            return _normalize_text(locator.first.inner_text())
+    except Exception:
+        return ""
+    return ""
+
+
+def _safe_locator_texts(locator: Any) -> List[str]:
+    try:
+        return [_normalize_text(text) for text in locator.all_inner_texts() if _normalize_text(text)]
+    except Exception:
+        return []
+
+
+def _default_return_date(departure_date: str) -> str:
+    try:
+        return (date.fromisoformat(departure_date) + timedelta(days=7)).isoformat()
+    except ValueError:
+        return departure_date
+
+
+def _extract_check24_offer(offer: Any) -> Dict[str, Any]:
+    label = _safe_locator_text(offer.locator('[data-testid^="offer_label_"]'))
+    price_text = _safe_locator_text(offer.locator('[data-testid="price_formatted"]'))
+    luggage_text = _safe_locator_text(offer.locator('[data-testid="inclusive_luggage_text"]'))
+    dynamic_points = _safe_locator_text(offer.locator('[data-testid="dynamic_points"]'))
+    flights: List[Dict[str, str]] = []
+
+    for segment_key in ["flight_0_info", "flight_1_info"]:
+        segment = offer.locator(f'[data-testid="{segment_key}"]')
+        if segment.count() == 0:
+            continue
+        carrier_summary = _safe_locator_text(segment.locator('[data-testid="carrier_text"]'))
+        carrier_name = _safe_locator_text(segment.locator('[data-testid="carrier_name"]')) or carrier_summary
+        flights.append(
+            {
+                "departure_time": _safe_locator_text(segment.locator('[data-testid="departure_time"]')),
+                "departure_iata": _safe_locator_text(segment.locator('[data-testid="departure_iata"]')),
+                "departure_date": _safe_locator_text(segment.locator('[data-testid="departure_date"]')),
+                "duration": _safe_locator_text(segment.locator('[data-testid="travel_time_duration"]')),
+                "stops": _safe_locator_text(segment.locator('[data-testid="travel_time_stops"]')),
+                "arrival_time": _safe_locator_text(segment.locator('[data-testid="arrival_time"]')),
+                "arrival_iata": _safe_locator_text(segment.locator('[data-testid="arrival_iata"]')),
+                "arrival_date": _safe_locator_text(segment.locator('[data-testid="arrival_date"]')),
+                "carrier_name": carrier_name,
+                "carrier_detail": carrier_summary,
+            }
+        )
+
+    carriers = [flight.get("carrier_name", "") for flight in flights if flight.get("carrier_name")]
+    unique_carriers = list(dict.fromkeys(carriers))
+    stops_summary = list(dict.fromkeys([flight.get("stops", "") for flight in flights if flight.get("stops")]))
+    return {
+        "label": label,
+        "price_text": price_text,
+        "price_eur": _parse_eur_amount(price_text),
+        "luggage": luggage_text,
+        "dynamic_points": dynamic_points,
+        "carriers": unique_carriers,
+        "outbound_carrier": flights[0].get("carrier_name", "") if flights else "",
+        "inbound_carrier": flights[1].get("carrier_name", "") if len(flights) > 1 else "",
+        "stops": stops_summary,
+        "flights": flights,
+    }
+
+
+def collect_check24(
+    origin: str,
+    destination: str,
+    departure_date: str,
+    return_date: Optional[str] = None,
+    adults: int = 1,
+    cabin_code: str = "EPBF",
+    max_offers: int = 10,
+    headless: bool = True,
+) -> Dict[str, Any]:
+    if not origin or not destination or not departure_date:
+        raise RuntimeError("Check24 requires origin, destination, and departure_date")
+
+    return_date = return_date or _default_return_date(departure_date)
+    try:
+        from playwright.sync_api import TimeoutError as PlaywrightTimeoutError, sync_playwright
+    except Exception as exc:
+        raise RuntimeError("Playwright is not installed. Run 'python -m pip install playwright' and 'python -m playwright install chromium'.") from exc
+
+    query = {
+        "from_0": f"{origin}-A",
+        "to_0": f"{destination}-A",
+        "date_0": departure_date,
+        "from_1": f"{destination}-A",
+        "to_1": f"{origin}-A",
+        "date_1": return_date,
+        "adt": max(1, int(adults)),
+        "class": cabin_code,
+    }
+    url = f"https://flug.check24.de/search?{urlencode(query)}"
+    offers: List[Dict[str, Any]] = []
+
+    with sync_playwright() as playwright:
+        browser = playwright.chromium.launch(headless=headless)
+        page = browser.new_page(locale="de-DE", user_agent="Mozilla/5.0")
+        try:
+            page.goto(url, wait_until="domcontentloaded", timeout=120000)
+            page.wait_for_timeout(5000)
+            cookie_button = page.get_by_text("Nur notwendige Cookies", exact=True).first
+            if cookie_button.count() > 0:
+                cookie_button.click(timeout=5000)
+                page.wait_for_timeout(1500)
+            page.wait_for_selector('[data-testid="offer_0"]', timeout=90000)
+            headline = _safe_locator_text(page.locator('[data-testid="results_headline"]'))
+            direct_count = _safe_locator_text(page.locator('[data-testid="filter_transfer_count_0_count"]'))
+            direct_price = _safe_locator_text(page.locator('[data-testid="filter_transfer_count_0_price"]'))
+
+            for index in range(max(1, int(max_offers))):
+                offer = page.locator(f'[data-testid="offer_{index}"]').first
+                if offer.count() == 0:
+                    break
+                offers.append(_extract_check24_offer(offer))
+
+            browser.close()
+        except PlaywrightTimeoutError as exc:
+            browser.close()
+            raise RuntimeError(f"Check24 timed out while loading offers: {exc}") from exc
+        except Exception:
+            browser.close()
+            raise
+
+    return {
+        "source": "check24",
+        "endpoint": url,
+        "collected_at": utc_now(),
+        "records": len(offers),
+        "query": {
+            "origin": origin,
+            "destination": destination,
+            "departure_date": departure_date,
+            "return_date": return_date,
+            "adults": max(1, int(adults)),
+            "cabin_code": cabin_code,
+        },
+        "summary": {
+            "headline": headline,
+            "direct_count": direct_count,
+            "direct_min_price": direct_price,
+        },
+        "offers": offers,
+    }
 
 
 def get_opensky_auth_headers(require_auth: bool = False) -> Dict[str, str]:
@@ -526,6 +697,25 @@ def collect_once(config: CollectConfig) -> Dict[str, List[Dict[str, Any]]]:
         except Exception as exc:
             warn.append({"source": "airlabs", "error": str(exc)})
 
+    if config.use_check24:
+        if config.origin and config.destination and config.departure_date:
+            try:
+                check24_payload = collect_check24(
+                    config.origin,
+                    config.destination,
+                    config.departure_date,
+                    return_date=config.return_date,
+                    adults=config.adults,
+                    cabin_code=config.check24_cabin,
+                    max_offers=config.check24_max_offers,
+                )
+                path = write_json("check24", check24_payload)
+                ok.append({"source": "check24", "path": str(path), "records": check24_payload.get("records", 0)})
+            except Exception as exc:
+                warn.append({"source": "check24", "error": str(exc)})
+        else:
+            warn.append({"source": "check24", "error": "Skipped: missing origin, destination, or departure date"})
+
     return {"ok": ok, "warn": warn}
 
 
@@ -534,7 +724,10 @@ def run_once(args: argparse.Namespace) -> None:
         origin=args.origin,
         destination=args.destination,
         departure_date=args.departure_date,
+        return_date=args.return_date,
         adults=args.adults,
+        check24_cabin=args.check24_cabin,
+        check24_max_offers=args.check24_max_offers,
         dep_iata=args.dep_iata,
         arr_iata=args.arr_iata,
         eurostat_dataset=args.eurostat_dataset,
@@ -550,6 +743,7 @@ def run_once(args: argparse.Namespace) -> None:
         use_amadeus=not args.skip_amadeus,
         use_aviationstack=not args.skip_aviationstack,
         use_airlabs=not args.skip_airlabs,
+        use_check24=not args.skip_check24,
     )
     result = collect_once(config)
 
@@ -567,7 +761,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--origin", default="FRA", help="Origin IATA for fare query")
     parser.add_argument("--destination", default="LHR", help="Destination IATA for fare query")
     parser.add_argument("--departure-date", default="2026-06-15", help="Departure date YYYY-MM-DD")
+    parser.add_argument("--return-date", default="2026-06-22", help="Return date YYYY-MM-DD for Check24 round-trip search")
     parser.add_argument("--adults", type=int, default=1, help="Number of adults for fare query")
+    parser.add_argument("--check24-cabin", default="EPBF", help="Check24 cabin code (EPBF=Economy)")
+    parser.add_argument("--check24-max-offers", type=int, default=10, help="Maximum number of Check24 offers to capture")
 
     parser.add_argument("--dep-iata", default="FRA", help="Departure IATA for live flight feeds")
     parser.add_argument("--arr-iata", default="LHR", help="Arrival IATA for live flight feeds")
@@ -587,6 +784,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--skip-amadeus", action="store_true", help="Skip Amadeus source")
     parser.add_argument("--skip-aviationstack", action="store_true", help="Skip Aviationstack source")
     parser.add_argument("--skip-airlabs", action="store_true", help="Skip AirLabs source")
+    parser.add_argument("--skip-check24", action="store_true", help="Skip Check24 web source")
 
     return parser
 

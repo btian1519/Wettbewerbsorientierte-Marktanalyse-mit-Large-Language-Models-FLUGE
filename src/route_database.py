@@ -2,12 +2,27 @@
 
 ALL_REGION_OD_ROUTES = {
     "Europe": [
+        {"od": "IST-LHR", "origin": "Istanbul (IST)", "destination": "London (LHR)", "distance_km": 2490, "demand_tier": "high"},
+        {"od": "IST-CDG", "origin": "Istanbul (IST)", "destination": "Paris (CDG)", "distance_km": 2260, "demand_tier": "high"},
+        {"od": "IST-AMS", "origin": "Istanbul (IST)", "destination": "Amsterdam (AMS)", "distance_km": 2210, "demand_tier": "high"},
+        {"od": "IST-FCO", "origin": "Istanbul (IST)", "destination": "Rome (FCO)", "distance_km": 1370, "demand_tier": "high"},
+        {"od": "IST-MAD", "origin": "Istanbul (IST)", "destination": "Madrid (MAD)", "distance_km": 2730, "demand_tier": "medium"},
+        {"od": "IST-VIE", "origin": "Istanbul (IST)", "destination": "Vienna (VIE)", "distance_km": 1275, "demand_tier": "high"},
+        {"od": "IST-FRA", "origin": "Istanbul (IST)", "destination": "Frankfurt (FRA)", "distance_km": 1860, "demand_tier": "high"},
+        {"od": "CDG-LHR", "origin": "Paris (CDG)", "destination": "London (LHR)", "distance_km": 345, "demand_tier": "high"},
+        {"od": "CDG-AMS", "origin": "Paris (CDG)", "destination": "Amsterdam (AMS)", "distance_km": 400, "demand_tier": "high"},
+        {"od": "CDG-FCO", "origin": "Paris (CDG)", "destination": "Rome (FCO)", "distance_km": 1105, "demand_tier": "high"},
+        {"od": "CDG-MAD", "origin": "Paris (CDG)", "destination": "Madrid (MAD)", "distance_km": 1060, "demand_tier": "high"},
+        {"od": "CDG-BCN", "origin": "Paris (CDG)", "destination": "Barcelona (BCN)", "distance_km": 860, "demand_tier": "high"},
+        {"od": "CDG-VIE", "origin": "Paris (CDG)", "destination": "Vienna (VIE)", "distance_km": 1035, "demand_tier": "medium"},
+        {"od": "CDG-LGW", "origin": "Paris (CDG)", "destination": "London Gatwick (LGW)", "distance_km": 310, "demand_tier": "medium"},
         {"od": "FRA-LHR", "origin": "Frankfurt (FRA)", "destination": "London (LHR)", "distance_km": 650, "demand_tier": "high"},
         {"od": "FRA-AMS", "origin": "Frankfurt (FRA)", "destination": "Amsterdam (AMS)", "distance_km": 365, "demand_tier": "high"},
         {"od": "FRA-FCO", "origin": "Frankfurt (FRA)", "destination": "Rome (FCO)", "distance_km": 960, "demand_tier": "high"},
         {"od": "FRA-MAD", "origin": "Frankfurt (FRA)", "destination": "Madrid (MAD)", "distance_km": 1440, "demand_tier": "high"},
         {"od": "LHR-AMS", "origin": "London (LHR)", "destination": "Amsterdam (AMS)", "distance_km": 360, "demand_tier": "high"},
         {"od": "LHR-FCO", "origin": "London (LHR)", "destination": "Rome (FCO)", "distance_km": 1430, "demand_tier": "high"},
+        {"od": "LHR-MAD", "origin": "London (LHR)", "destination": "Madrid (MAD)", "distance_km": 1260, "demand_tier": "high"},
         {"od": "MAD-BCN", "origin": "Madrid (MAD)", "destination": "Barcelona (BCN)", "distance_km": 620, "demand_tier": "high"},
         {"od": "MUC-VIE", "origin": "Munich (MUC)", "destination": "Vienna (VIE)", "distance_km": 355, "demand_tier": "medium"},
     ],
@@ -68,12 +83,58 @@ AIRLINE_HOMEBASE_MAP = {
 
 # Aircraft type mapping based on typical capacity and range
 AIRCRAFT_TYPES = [
+    {"code": "CRJ9", "seats": 90, "range_km": 2900, "turnaround_min": 25},
+    {"code": "E190", "seats": 100, "range_km": 4500, "turnaround_min": 25},
+    {"code": "E195", "seats": 120, "range_km": 4000, "turnaround_min": 25},
     {"code": "A319", "seats": 144, "range_km": 6300, "turnaround_min": 30},
     {"code": "A320", "seats": 194, "range_km": 6300, "turnaround_min": 30},
     {"code": "A321", "seats": 244, "range_km": 7000, "turnaround_min": 30},
     {"code": "B737-8", "seats": 189, "range_km": 5600, "turnaround_min": 30},
     {"code": "B737-9", "seats": 220, "range_km": 6570, "turnaround_min": 30},
 ]
+
+AIRLINE_FLEET_OPTIONS = {
+    "LH": ["A319", "A320", "A321"],
+    "BA": ["A320", "A321", "B737-8"],
+    "AF": ["A319", "A320", "A321"],
+    "KL": ["E195", "A320", "A321"],
+    "IB": ["A320", "A321"],
+    "VY": ["A320", "A321"],
+    "U2": ["A319", "A320", "A321"],
+    "OS": ["CRJ9", "E195", "A320", "A321"],
+    "TK": ["A320", "A321", "B737-8", "B737-9"],
+    "AZ": ["A319", "A320", "A321"],
+    "LX": ["A220-300", "A320", "A321"],
+}
+
+AIRCRAFT_SEAT_MAP = {
+    "A220-300": 145,
+    "A223": 145,
+    "A319": 144,
+    "A320": 180,
+    "A20N": 186,
+    "A321": 220,
+    "A21N": 220,
+    "A318": 132,
+    "A332": 260,
+    "A333": 300,
+    "A359": 315,
+    "A35K": 350,
+    "B738": 189,
+    "B37M": 189,
+    "B739": 210,
+    "B39M": 210,
+    "B788": 248,
+    "B789": 290,
+    "B77W": 360,
+    "B763": 240,
+    "E190": 100,
+    "E195": 120,
+    "E295": 132,
+    "CRJ9": 90,
+    "AT76": 70,
+    "DH8D": 78,
+}
 
 def get_all_od_routes():
     """Return all OD routes across all configured regions."""
@@ -127,9 +188,24 @@ def get_od_by_airline_homebase(airline_code: str, region: str = "Europe"):
     """Filter OD routes relevant to airline home base within the selected region."""
     return get_od_candidate_pool_info(airline_code, region)["routes"]
 
-def recommend_aircraft(estimated_pax: int) -> str:
-    """Recommend aircraft type based on expected passenger count."""
-    for ac in sorted(AIRCRAFT_TYPES, key=lambda x: x["seats"]):
+def recommend_aircraft(estimated_pax: int, airline_code: str = "") -> str:
+    """Recommend an aircraft using the airline's configured fleet when available."""
+    fleet_codes = AIRLINE_FLEET_OPTIONS.get(str(airline_code or "").strip().upper()) or []
+    if fleet_codes:
+        candidate_types = [ac for ac in AIRCRAFT_TYPES if ac["code"] in fleet_codes]
+    else:
+        candidate_types = AIRCRAFT_TYPES
+
+    if not candidate_types:
+        candidate_types = AIRCRAFT_TYPES
+
+    for ac in sorted(candidate_types, key=lambda x: x["seats"]):
         if estimated_pax <= ac["seats"]:
             return ac["code"]
-    return AIRCRAFT_TYPES[-1]["code"]  # Largest if needed
+    return sorted(candidate_types, key=lambda x: x["seats"])[-1]["code"]
+
+
+def get_aircraft_seat_capacity(aircraft_code: str) -> int:
+    """Return a typical seat count proxy for common aircraft ICAO/IATA equipment codes."""
+    code = str(aircraft_code or "").strip().upper()
+    return int(AIRCRAFT_SEAT_MAP.get(code) or 0)

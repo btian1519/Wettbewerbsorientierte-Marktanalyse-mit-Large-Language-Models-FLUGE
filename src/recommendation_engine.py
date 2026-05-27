@@ -453,6 +453,9 @@ def calculate_route_scores(
         target_airline_live_count = int((live_od_counts_by_airline.get(airline_code) or {}).get(od, 0))
         target_airline_historical_count = int((historical_od_counts_by_airline.get(airline_code) or {}).get(od, 0))
         target_airline_observed_flights = target_airline_live_count + target_airline_historical_count
+        has_observed_support = od in merged_od_heat or bool(observed_airlines) or target_airline_observed_flights > 0
+        if not has_observed_support:
+            continue
         heat_source = "realtime" if has_realtime_od and od in od_heat_realtime else \
                       "observed" if has_route_obs else "fallback"
         if heat_source == "fallback":
@@ -557,7 +560,7 @@ def calculate_route_scores(
             category = "long"
         
         estimated_pax = int(estimated_pax_map[route["demand_tier"]][category] * (0.9 + 0.4 * live_idx))
-        aircraft = recommend_aircraft(estimated_pax)
+        aircraft = recommend_aircraft(estimated_pax, airline_code=airline_code)
         
         reasoning = [
             f"[rule-based] Demand tier: {route['demand_tier'].upper()}",
