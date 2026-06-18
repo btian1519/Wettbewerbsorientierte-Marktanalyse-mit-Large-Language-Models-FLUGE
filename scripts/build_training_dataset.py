@@ -10,6 +10,7 @@ from typing import Any, Dict, List
 BASE_DIR = Path(__file__).resolve().parent.parent
 RAW_DIR = BASE_DIR / "data" / "raw"
 PROCESSED_DIR = BASE_DIR / "data" / "processed"
+FR24_SNAPSHOT_CSV = PROCESSED_DIR / "fr24_flight_snapshot.csv"
 sys.path.insert(0, str(BASE_DIR))
 
 from src.route_database import get_aircraft_seat_capacity, get_all_od_routes, get_homebases_for_airline
@@ -17,11 +18,18 @@ from src.route_database import get_aircraft_seat_capacity, get_all_od_routes, ge
 
 def parse_collected_at(value: Any) -> datetime:
     text = str(value or "").strip()
-    for fmt in ("%Y%m%dT%H%M%SZ", "%Y-%m-%dT%H:%M:%SZ"):
+    for fmt in ("%Y%m%dT%H%M%SZ", "%Y-%m-%dT%H:%M:%SZ", "%Y-%m-%d %H:%M:%S"):
         try:
             return datetime.strptime(text, fmt).replace(tzinfo=timezone.utc)
         except ValueError:
             continue
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+    except ValueError:
+        pass
     raise ValueError(f"Unsupported timestamp format: {value!r}")
 
 
@@ -200,6 +208,122 @@ def build_airlabs_lookup() -> Dict[str, List[Dict[str, Any]]]:
     return lookup
 
 
+def _first_non_empty(mapping: Dict[str, Any], *keys: str) -> str:
+    for key in keys:
+        value = str(mapping.get(key) or "").strip()
+        if value:
+            return value
+    return ""
+
+
+def _normalize_fr24_row(row: Dict[str, Any]) -> Dict[str, Any] | None:
+    lower = {str(key).strip().lower(): value for key, value in row.items()}
+    collected_text = _first_non_empty(
+        lower,
+        "snapshot_at",
+        "collected_at",
+        "observed_at",
+        "flight_date",
+        "date",
+    )
+    if not collected_text:
+        return None
+    try:
+        collected_dt = parse_collected_at(collected_text)
+    except ValueError:
+        return None
+
+    origin = _first_non_empty(lower, "origin", "origin_iata", "dep_iata", "from", "departure_iata").upper()
+    destination = _first_non_empty(lower, "destination", "destination_iata", "arr_iata", "to", "arrival_iata").upper()
+    if len(origin) != 3 or len(destination) != 3:
+        return None
+
+    airline = _first_non_empty(lower, "airline_iata", "carrier_iata", "operator_iata", "airline", "carrier").upper()
+    aircraft = _first_non_empty(lower, "aircraft_icao", "aircraft_type", "aircraft", "equipment").upper()
+    seat_capacity = 0.0
+    seat_text = _first_non_empty(lower, "seat_capacity", "seats", "aircraft_seats")
+    if seat_text:
+        try:
+            seat_capacity = float(seat_text)
+        except ValueError:
+            seat_capacity = 0.0
+    if seat_capacity <= 0 and aircraft:
+        seat_capacity = float(get_aircraft_seat_capacity(aircraft))
+
+    return {
+        "_collected_dt": collected_dt,
+        "od": f"{origin}-{destination}",
+        "airline": airline,
+        "aircraft": aircraft,
+        "seat_capacity": seat_capacity,
+    }
+
+
+def build_fr24_lookup() -> Dict[str, List[Dict[str, Any]]]:
+    lookup: Dict[str, List[Dict[str, Any]]] = {"all": []}
+    if not FR24_SNAPSHOT_CSV.exists():
+        return lookup
+
+    grouped_records: Dict[datetime, List[Dict[str, Any]]] = {}
+    with FR24_SNAPSHOT_CSV.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            normalized = _normalize_fr24_row(row)
+            if normalized is None:
+                continue
+            grouped_records.setdefault(normalized["_collected_dt"], []).append(normalized)
+
+    for collected_dt in sorted(grouped_records):
+        route_counts: Dict[str, int] = {}
+        route_airlines: Dict[str, set[str]] = {}
+        airline_route_counts: Dict[str, Dict[str, int]] = {}
+        route_aircraft_types: Dict[str, set[str]] = {}
+        route_seat_values: Dict[str, List[float]] = {}
+        airline_route_seat_values: Dict[str, Dict[str, List[float]]] = {}
+        for record in grouped_records[collected_dt]:
+            od = str(record.get("od") or "")
+            airline = str(record.get("airline") or "")
+            aircraft = str(record.get("aircraft") or "")
+            seat_capacity = float(record.get("seat_capacity") or 0.0)
+            if not od:
+                continue
+            route_counts[od] = route_counts.get(od, 0) + 1
+            if airline:
+                route_airlines.setdefault(od, set()).add(airline)
+                airline_route_counts.setdefault(airline, {})
+                airline_route_counts[airline][od] = airline_route_counts[airline].get(od, 0) + 1
+            if aircraft:
+                route_aircraft_types.setdefault(od, set()).add(aircraft)
+            if seat_capacity > 0:
+                route_seat_values.setdefault(od, []).append(seat_capacity)
+                if airline:
+                    airline_route_seat_values.setdefault(airline, {})
+                    airline_route_seat_values[airline].setdefault(od, []).append(seat_capacity)
+
+        lookup["all"].append(
+            {
+                "_collected_dt": collected_dt,
+                "route_counts": route_counts,
+                "route_airlines": {od: sorted(values) for od, values in route_airlines.items()},
+                "airline_route_counts": airline_route_counts,
+                "route_aircraft_type_count": {od: len(types) for od, types in route_aircraft_types.items()},
+                "route_avg_seats": {
+                    od: round(sum(seats) / len(seats), 2) for od, seats in route_seat_values.items() if seats
+                },
+                "route_total_capacity_proxy": {
+                    od: int(round(sum(seats))) for od, seats in route_seat_values.items() if seats
+                },
+                "airline_route_avg_seats": {
+                    airline: {
+                        od: round(sum(seats) / len(seats), 2) for od, seats in od_map.items() if seats
+                    }
+                    for airline, od_map in airline_route_seat_values.items()
+                },
+            }
+        )
+    return lookup
+
+
 def get_latest_aviationstack_features(
     od: str,
     airline_code: str,
@@ -335,6 +459,49 @@ def get_latest_check24_features(
     }
 
 
+def get_latest_fr24_features(
+    od: str,
+    airline_code: str,
+    snapshot_dt: datetime,
+    fr24_lookup: Dict[str, List[Dict[str, Any]]],
+    max_age_hours: float,
+) -> Dict[str, Any]:
+    payload = select_nearest_snapshot(
+        fr24_lookup.get("all", []),
+        snapshot_dt,
+        max_age_hours=max_age_hours,
+    )
+    if payload is None:
+        return {
+            "fr24_route_records": 0,
+            "fr24_route_airline_count": 0,
+            "fr24_target_airline_records": 0,
+            "fr24_target_airline_present": 0,
+            "fr24_route_aircraft_type_count": 0,
+            "fr24_route_avg_seats": 0.0,
+            "fr24_route_total_capacity_proxy": 0.0,
+            "fr24_target_airline_avg_seats": 0.0,
+        }
+    route_counts = payload.get("route_counts") or {}
+    route_airlines = payload.get("route_airlines") or {}
+    airline_route_counts = payload.get("airline_route_counts") or {}
+    route_aircraft_type_count = payload.get("route_aircraft_type_count") or {}
+    route_avg_seats = payload.get("route_avg_seats") or {}
+    route_total_capacity_proxy = payload.get("route_total_capacity_proxy") or {}
+    airline_route_avg_seats = payload.get("airline_route_avg_seats") or {}
+    target_airline_records = int((airline_route_counts.get(airline_code) or {}).get(od, 0) or 0)
+    return {
+        "fr24_route_records": int(route_counts.get(od) or 0),
+        "fr24_route_airline_count": len(route_airlines.get(od) or []),
+        "fr24_target_airline_records": target_airline_records,
+        "fr24_target_airline_present": int(target_airline_records > 0),
+        "fr24_route_aircraft_type_count": int(route_aircraft_type_count.get(od) or 0),
+        "fr24_route_avg_seats": float(route_avg_seats.get(od) or 0.0),
+        "fr24_route_total_capacity_proxy": float(route_total_capacity_proxy.get(od) or 0.0),
+        "fr24_target_airline_avg_seats": float(((airline_route_avg_seats.get(airline_code) or {}).get(od)) or 0.0),
+    }
+
+
 def _parse_eur_amount(value: str) -> float:
     text = str(value or "").replace("\xa0", " ").replace("€", "").strip()
     text = text.replace(".", "").replace(",", ".")
@@ -382,6 +549,7 @@ def build_rows(aux_window_hours: float = 24.0, check24_window_hours: float = 336
     check24_lookup = build_check24_lookup()
     aviationstack_lookup = build_aviationstack_lookup()
     airlabs_lookup = build_airlabs_lookup()
+    fr24_lookup = build_fr24_lookup()
     opensky_payloads = [payload for payload in load_json_files("opensky_flights") if payload.get("region")]
 
     grouped_by_region: Dict[str, List[Dict[str, Any]]] = {}
@@ -447,6 +615,13 @@ def build_rows(aux_window_hours: float = 24.0, check24_window_hours: float = 336
                         airlabs_lookup,
                         max_age_hours=aux_window_hours,
                     )
+                    fr24_features = get_latest_fr24_features(
+                        od,
+                        airline_code,
+                        current_dt,
+                        fr24_lookup,
+                        max_age_hours=aux_window_hours,
+                    )
                     rows.append(
                         {
                             "snapshot_at": current_dt.strftime("%Y-%m-%dT%H:%M:%SZ"),
@@ -482,6 +657,7 @@ def build_rows(aux_window_hours: float = 24.0, check24_window_hours: float = 336
                             **check24_features,
                             **aviationstack_features,
                             **airlabs_features,
+                            **fr24_features,
                         }
                     )
     rows.sort(key=lambda item: (item["snapshot_at"], item["region"], item["airline"], item["od"]))

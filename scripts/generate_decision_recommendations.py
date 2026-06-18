@@ -35,6 +35,8 @@ def infer_support(row: Dict[str, Any]) -> tuple[str, List[str]]:
         sources.append("opensky-history")
     if to_float(row, "airlabs_route_records") > 0:
         sources.append("airlabs")
+    if to_float(row, "fr24_route_records") > 0:
+        sources.append("fr24-capacity")
     if to_float(row, "aviationstack_route_records") > 0:
         sources.append("aviationstack")
     if to_float(row, "check24_records") > 0:
@@ -50,6 +52,14 @@ def infer_support(row: Dict[str, Any]) -> tuple[str, List[str]]:
     else:
         level = "sparse"
     return level, sources
+
+
+def _preferred_positive(row: Dict[str, Any], *keys: str) -> float:
+    for key in keys:
+        value = to_float(row, key)
+        if value > 0:
+            return value
+    return 0.0
 
 
 def build_recommendations(dataset_path: Path, alpha: float, test_ratio: float, limit: int) -> List[Dict[str, Any]]:
@@ -73,6 +83,8 @@ def build_recommendations(dataset_path: Path, alpha: float, test_ratio: float, l
     for row, future_flights, future_share in zip(rows, pred_flights, pred_share):
         current_share = to_float(row, "current_airline_od_share")
         support_level, support_sources = infer_support(row)
+        current_route_avg_seats = _preferred_positive(row, "fr24_route_avg_seats", "airlabs_route_avg_seats")
+        current_target_airline_avg_seats = _preferred_positive(row, "fr24_target_airline_avg_seats", "airlabs_target_airline_avg_seats")
         recommendation = recommend_action(
             DecisionInputs(
                 airline=row.get("airline", ""),
@@ -85,8 +97,8 @@ def build_recommendations(dataset_path: Path, alpha: float, test_ratio: float, l
                 predicted_future_airline_od_flights=float(future_flights),
                 predicted_future_airline_od_share=float(max(min(future_share, 1.0), 0.0)),
                 predicted_share_delta=float(max(min(future_share, 1.0), 0.0) - current_share),
-                current_route_avg_seats=to_float(row, "airlabs_route_avg_seats"),
-                current_target_airline_avg_seats=to_float(row, "airlabs_target_airline_avg_seats"),
+                current_route_avg_seats=current_route_avg_seats,
+                current_target_airline_avg_seats=current_target_airline_avg_seats,
                 current_yield_proxy_eur_per_1000km=to_float(row, "check24_yield_proxy_eur_per_1000km"),
             )
         )
@@ -100,9 +112,12 @@ def build_recommendations(dataset_path: Path, alpha: float, test_ratio: float, l
                 "predicted_future_airline_od_flights": round(float(future_flights), 4),
                 "predicted_future_airline_od_share": round(float(max(min(future_share, 1.0), 0.0)), 4),
                 "predicted_share_delta": round(float(max(min(future_share, 1.0), 0.0) - current_share), 4),
-                "current_route_avg_seats": to_float(row, "airlabs_route_avg_seats"),
-                "current_target_airline_avg_seats": to_float(row, "airlabs_target_airline_avg_seats"),
+                "current_route_avg_seats": current_route_avg_seats,
+                "current_target_airline_avg_seats": current_target_airline_avg_seats,
                 "current_yield_proxy_eur_per_1000km": to_float(row, "check24_yield_proxy_eur_per_1000km"),
+                "fr24_route_records": to_float(row, "fr24_route_records"),
+                "fr24_route_avg_seats": to_float(row, "fr24_route_avg_seats"),
+                "fr24_target_airline_avg_seats": to_float(row, "fr24_target_airline_avg_seats"),
                 "scoring_split": "test" if id(row) in test_identity else "train",
                 "support_level": support_level,
                 "support_sources": support_sources,

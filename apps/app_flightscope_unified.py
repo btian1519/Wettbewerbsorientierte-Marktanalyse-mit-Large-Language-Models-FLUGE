@@ -189,6 +189,13 @@ def has_positive_yield_proxy(decision: pd.Series | dict) -> bool:
     return not pd.isna(yield_proxy) and float(yield_proxy) > 0
 
 
+def has_support_source(decision: pd.Series | dict, source_name: str) -> bool:
+    sources = decision.get("support_sources") if isinstance(decision, dict) else decision.get("support_sources")
+    if not isinstance(sources, list):
+        return False
+    return any(str(item).strip().lower() == source_name.strip().lower() for item in sources)
+
+
 def add_months(month_start: date, months_to_add: int) -> date:
     ts = pd.Timestamp(month_start) + pd.DateOffset(months=months_to_add)
     return date(int(ts.year), int(ts.month), 1)
@@ -656,10 +663,10 @@ else:
         "They are shown separately from the heuristic route-ranking block below."
     )
     st.caption(
-        "Rows with positive web-yield evidence are shown first when available; after that, rows with any matched AirLabs or Check24 auxiliary support are prioritized ahead of baseline-only rows."
+        "Rows with positive web-yield evidence are shown first when available; after that, rows with any matched AirLabs, FR24, or Check24 auxiliary support are prioritized ahead of baseline-only rows."
     )
     st.caption(
-        "If capacity or yield evidence shows as n/a, that means the current row has no matched AirLabs or Check24 auxiliary support yet. "
+        "If capacity or yield evidence shows as n/a, that means the current row has no matched AirLabs, FR24, or Check24 auxiliary support yet. "
         "It does not mean true aircraft size or route yield is zero."
     )
     for _, decision in filtered_decisions.head(num_recommendations).iterrows():
@@ -676,9 +683,11 @@ else:
             evidence_tags = []
             if has_positive_yield_proxy(decision):
                 evidence_tags.append("PRICE-BACKED")
-            elif has_auxiliary_capacity_or_yield_support(decision):
+            if has_support_source(decision, "fr24-capacity"):
+                evidence_tags.append("FR24-CAPACITY")
+            if not evidence_tags and has_auxiliary_capacity_or_yield_support(decision):
                 evidence_tags.append("AUX-SUPPORTED")
-            else:
+            if not evidence_tags:
                 evidence_tags.append("BASELINE-ONLY")
             st.caption("Evidence status: " + " | ".join(evidence_tags))
         with d2:
@@ -703,7 +712,7 @@ else:
             f"Web yield proxy {yield_proxy}"
         )
         if not has_auxiliary_capacity_or_yield_support(decision):
-            st.caption("Interpretation note: this row currently relies on baseline OpenSky history only; auxiliary capacity or web-price support has not matched this OD yet.")
+            st.caption("Interpretation note: this row currently relies on baseline OpenSky history only; auxiliary capacity or web-price support from AirLabs, FR24, or Check24 has not matched this OD yet.")
         support_level = str(decision.get("support_level") or "unknown")
         scoring_split = str(decision.get("scoring_split") or "unknown").upper()
         support_sources = decision.get("support_sources") or []
@@ -769,7 +778,7 @@ else:
                 f"Yield {format_proxy_value(linked_decision.get('current_yield_proxy_eur_per_1000km'), ' EUR/1000km')}"
             )
             if not has_auxiliary_capacity_or_yield_support(linked_decision):
-                st.caption("Interpretation note: no matched AirLabs or Check24 auxiliary evidence for this route card yet; the action is currently driven by baseline OpenSky history and modeled demand/share movement.")
+                st.caption("Interpretation note: no matched AirLabs, FR24, or Check24 auxiliary evidence for this route card yet; the action is currently driven by baseline OpenSky history and modeled demand/share movement.")
             if isinstance(support_sources, list) and support_sources:
                 st.caption("Action support sources: " + ", ".join(str(item) for item in support_sources))
 
