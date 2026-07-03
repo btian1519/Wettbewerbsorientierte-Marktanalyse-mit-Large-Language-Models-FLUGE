@@ -27,7 +27,7 @@ pip install -r requirements.txt
 
 **Route Recommendation System (Main App):**
 ```bash
-streamlit run apps/app_route_advisor.py
+streamlit run apps/app_flightscope_unified.py
 ```
 
 **Data Collection Tool:**
