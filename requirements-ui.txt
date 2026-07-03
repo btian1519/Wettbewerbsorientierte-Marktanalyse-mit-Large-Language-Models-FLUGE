@@ -1,0 +1,5 @@
+# FlightScope AI — frontend dependencies.
+# The backend (src/) additionally requires pandas and its own data-source libs.
+streamlit>=1.36
+pydeck>=0.9
+pandas>=2.0
