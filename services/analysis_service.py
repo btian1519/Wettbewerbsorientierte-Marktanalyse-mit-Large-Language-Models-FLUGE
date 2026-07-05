@@ -22,7 +22,7 @@ from datetime import date, datetime, timezone
 from flightscope_backend.core.constants import AIRLINES, PLANNING_HORIZON_OPTIONS, REGION_BBOX
 
 from services.geo import build_view_state, coord_for, split_od
-from services.models import AnalysisParams, AnalysisResult, Recommendation
+from services.models import AnalysisParams, AnalysisResult, CollectionOutcome, Recommendation
 
 # UI Task options → set of backend opportunity labels they emphasise.
 # Used as a *soft* filter: matching rows are ordered first, the rest remain
@@ -68,6 +68,62 @@ def default_effective_month(today: date | None = None) -> date:
     """Return the first day of the current month (backend seasonality anchor)."""
     today = today or date.today()
     return date(today.year, today.month, 1)
+
+
+# --------------------------------------------------------------------------- #
+# Data-source status & collection
+# --------------------------------------------------------------------------- #
+def get_source_status() -> dict[str, bool]:
+    """Return which data sources are configured (credential/dependency check).
+
+    Safe to call before any collection: only imports the backend engine (no
+    pandas). Returns an empty dict if the backend cannot be imported.
+    """
+    try:
+        from flightscope_backend.engine import collect_sources
+    except Exception:  # pragma: no cover - environment dependent
+        return {}
+    return collect_sources.get_available_sources()
+
+
+def collect_data(params: AnalysisParams) -> CollectionOutcome:
+    """Collect market data for *params*'s region into ``data/raw``.
+
+    Runs only the sources that are currently configured (via credentials);
+    unconfigured sources are skipped, not attempted. This populates the raw
+    payloads that :func:`run_analysis` scores against.
+
+    Args:
+        params: Provides the region (→ bounding box) and effective month.
+
+    Returns:
+        A :class:`CollectionOutcome` with per-source successes/warnings.
+
+    Raises:
+        RuntimeError: If the backend package cannot be imported.
+    """
+    try:
+        from flightscope_backend.engine import collect_sources
+        from flightscope_backend.services.planning import run_collection
+    except Exception as exc:  # pragma: no cover - environment dependent
+        raise RuntimeError(
+            "FlightScope backend is not importable. Ensure 'src/' and 'data/' "
+            f"sit at the project root and dependencies are installed: {exc}"
+        ) from exc
+
+    available = collect_sources.get_available_sources()
+    bbox = REGION_BBOX.get(params.region, REGION_BBOX["Global"])
+    result = run_collection(
+        bbox=bbox,
+        effective_month=params.effective_month,
+        region=params.region,
+        available_sources=available,
+    )
+    return CollectionOutcome(
+        ok=list(result.get("ok") or []),
+        warn=list(result.get("warn") or []),
+        available_sources=available,
+    )
 
 
 # --------------------------------------------------------------------------- #

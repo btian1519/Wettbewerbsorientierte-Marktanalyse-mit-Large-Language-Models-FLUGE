@@ -94,6 +94,26 @@ class ViewState:
 
 
 @dataclass
+class CollectionOutcome:
+    """Result of a data-collection run (wraps ``run_collection`` output).
+
+    Attributes:
+        ok: Per-source success entries (``source``, ``records``, ``path`` …).
+        warn: Per-source warnings/failures (``source``, ``error``).
+        available_sources: Which sources were configured at collection time.
+    """
+
+    ok: list[dict[str, object]]
+    warn: list[dict[str, object]]
+    available_sources: dict[str, bool]
+
+    @property
+    def total_records(self) -> int:
+        """Sum of records collected across all successful sources."""
+        return sum(int(entry.get("records", 0) or 0) for entry in self.ok)
+
+
+@dataclass
 class AnalysisResult:
     """Full result of one analysis run, cached in Streamlit session state.
 

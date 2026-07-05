@@ -1,0 +1,15 @@
+# Secrets
+.env
+openskyapi/credentials.json
+
+# Collected data (keep folders, ignore payloads)
+data/raw/**
+data/processed/**
+!data/raw/.gitkeep
+!data/processed/.gitkeep
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/

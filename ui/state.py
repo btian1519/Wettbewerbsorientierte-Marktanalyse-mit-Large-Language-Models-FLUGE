@@ -20,7 +20,7 @@ from services.analysis_service import (
     get_continent_options,
     get_task_options,
 )
-from services.models import AnalysisParams, AnalysisResult
+from services.models import AnalysisParams, AnalysisResult, CollectionOutcome
 
 TOP_N_INITIAL = 3
 SHOW_MORE_STEP = 3
@@ -39,6 +39,7 @@ class Key:
     PAGE = "fs_page"
     PARAMS = "fs_params"
     RESULT = "fs_result"
+    COLLECTION = "fs_collection"
     VISIBLE_COUNT = "fs_visible_count"
     SELECTED_OD = "fs_selected_od"
     FILTERS = "fs_filters"
@@ -54,6 +55,7 @@ def init() -> None:
     ss.setdefault(Key.PAGE, Page.START.value)
     ss.setdefault(Key.PARAMS, None)
     ss.setdefault(Key.RESULT, None)
+    ss.setdefault(Key.COLLECTION, None)
     ss.setdefault(Key.VISIBLE_COUNT, TOP_N_INITIAL)
     ss.setdefault(Key.SELECTED_OD, None)
     ss.setdefault(Key.FILTERS, {})
@@ -96,6 +98,16 @@ def store_result(params: AnalysisParams, result: AnalysisResult) -> None:
 def get_result() -> AnalysisResult | None:
     """Return the cached analysis result, if any."""
     return st.session_state.get(Key.RESULT)
+
+
+def store_collection(outcome: CollectionOutcome) -> None:
+    """Persist the most recent data-collection outcome for display."""
+    st.session_state[Key.COLLECTION] = outcome
+
+
+def get_collection() -> CollectionOutcome | None:
+    """Return the most recent data-collection outcome, if any."""
+    return st.session_state.get(Key.COLLECTION)
 
 
 def get_visible_count() -> int:

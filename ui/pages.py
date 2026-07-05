@@ -9,8 +9,8 @@ from __future__ import annotations
 
 import streamlit as st
 
-from services.analysis_service import run_analysis
-from services.models import AnalysisParams
+from services.analysis_service import collect_data, run_analysis
+from services.models import AnalysisParams, CollectionOutcome
 from ui import map as map_view
 from ui import results as results_view
 from ui import sidebar, state
@@ -39,7 +39,12 @@ def render_start_page() -> None:
 
 def render_results_page() -> None:
     """Render the results screen: sidebar + map (top) + recommendations (bottom)."""
-    sidebar.render_sidebar(on_refresh=lambda: _run_and_open_results(state.current_inputs()))
+    sidebar.render_sidebar(
+        on_refresh=lambda: _run_and_open_results(state.current_inputs()),
+        on_collect=lambda: _collect_and_refresh(state.current_inputs()),
+    )
+
+    _render_collection_summary(state.get_collection())
 
     result = state.get_result()
     if result is None:
@@ -65,3 +70,37 @@ def _run_and_open_results(params: AnalysisParams) -> None:
     state.store_result(params, result)
     state.goto(Page.RESULTS)
     st.rerun()
+
+
+def _collect_and_refresh(params: AnalysisParams) -> None:
+    """Collect fresh market data for the region, then re-run the analysis."""
+    with st.spinner("Collecting market data from configured sources…"):
+        try:
+            outcome = collect_data(params)
+        except RuntimeError as exc:
+            st.error(str(exc))
+            return
+    state.store_collection(outcome)
+
+    with st.spinner("Running analysis…"):
+        try:
+            result = run_analysis(params)
+        except RuntimeError as exc:
+            st.error(str(exc))
+            return
+    state.store_result(params, result)
+    state.goto(Page.RESULTS)
+    st.rerun()
+
+
+def _render_collection_summary(outcome: CollectionOutcome | None) -> None:
+    """Render a compact summary of the most recent data-collection run."""
+    if outcome is None:
+        return
+    if outcome.ok:
+        st.success(
+            f"Collected {outcome.total_records} record(s) from "
+            f"{len(outcome.ok)} source(s)."
+        )
+    for warning in outcome.warn:
+        st.warning(f"{warning.get('source', '?')}: {warning.get('error', '')}")

@@ -43,15 +43,40 @@ imports `src/` or `flightscope_backend/` directly.
   does not trigger collection. With no `data/raw`, the backend returns zero
   recommendations and the UI shows a helpful notice instead of failing.
 
-## Requirements
+## Requirements & run
 
-`src/` and `data/` from the FlightScope repo must sit at the project root
-(the backend package wraps them). Then:
+`src/` and `data/` sit at the project root (the backend wraps them; `src/` is
+already vendored here). Then:
 
 ```bash
 pip install -r requirements-ui.txt   # streamlit, pydeck, pandas
 streamlit run streamlit_app.py
 ```
+
+The data collectors themselves use only the Python standard library — no extra
+install is needed to call the APIs.
+
+## Data collection & API credentials
+
+Recommendations require observed market data under `data/raw`. To get it:
+
+1. Copy `.env.example` → `.env` and add at least one **OD-heat source** key:
+   AirLabs (`AIRLABS_API_KEY`), Aviationstack (`AVIATIONSTACK_API_KEY`), or
+   OpenSky OAuth2 (`OPENSKY_CLIENT_ID` / `OPENSKY_CLIENT_SECRET`). AirLabs and
+   Aviationstack both have free tiers; the file lists the sign-up URLs.
+2. Start the app, open the sidebar → **Data sources** (shows 🟢 configured /
+   ⚪ missing) → **Collect data**. This runs only the configured collectors
+   for the selected region and writes payloads to `data/raw`.
+3. The analysis then re-runs automatically and route recommendations appear.
+
+Collectors live in `src/collect_sources.py` (unchanged upstream code): OpenSky
+states + flight history, Aviationstack, AirLabs, Amadeus, Eurostat, Check24.
+The service layer (`analysis_service.collect_data`) only invokes sources whose
+credentials are present; the rest are skipped and reported as warnings.
+
+> Portability fix: `get_available_sources()` guarded its Playwright probe so it
+> no longer raises `ModuleNotFoundError` when Playwright (Check24, optional) is
+> not installed. This is the only change to `src/`.
 
 ## Extending
 
