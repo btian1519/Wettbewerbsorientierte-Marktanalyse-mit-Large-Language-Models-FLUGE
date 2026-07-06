@@ -1,0 +1,13 @@
+# FlightScope AI — runtime dependencies (Python 3.11+)
+streamlit>=1.58
+pandas>=2.2
+numpy>=1.26
+openpyxl>=3.1          # read AIRPORTS.xlsx
+SQLAlchemy>=2.0        # ORM + persistence abstraction
+pydantic>=2.0          # request/DTO validation
+pydeck>=0.9            # prepared alternative map backend
+plotly>=6.0            # prepared alternative map backend
+reportlab>=4.0         # PDF export
+
+# Dev / test
+pytest>=8.0

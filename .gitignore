@@ -1,15 +1,13 @@
-# Secrets
-.env
-openskyapi/credentials.json
-
-# Collected data (keep folders, ignore payloads)
-data/raw/**
-data/processed/**
-!data/raw/.gitkeep
-!data/processed/.gitkeep
-
-# Python
 __pycache__/
-*.pyc
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Generated demo database (rebuild with `python -m scripts.seed --force`)
+/data/
+*.db
+*.db-wal
+*.db-shm
+
 .venv/
-venv/
+.env
