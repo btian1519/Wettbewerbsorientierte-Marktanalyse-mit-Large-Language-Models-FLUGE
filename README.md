@@ -122,15 +122,21 @@ later without touching the pages.
   `AIRPORTS.xlsx`. None are hard-coded.
 * Continents used: Africa, North America, South America, Europe, Asia, Oceania,
   plus the **Global/Intercontinental** scope (endpoints on different continents).
-* The demo generator targets ≥ 5 000 routes per scope. Two honest data limits are
+* The demo generator targets ≥ 5 000 routes per scope. Honest data limits are
   handled rather than faked:
-  * **Oceania** has only ~35 usable airports → max 1 190 directed pairs; all are
+  * **Oceania** has only ~34 usable airports → ~1 100 valid directed pairs; all are
     generated (fewer than 5 000 is physically unavoidable without inventing
     airports).
-  * ~290 airports in the source have no coordinates and a few have a continent
-    label inconsistent with their coordinates. Coordinate-less rows are dropped at
-    load; the map view uses percentile clipping so the odd mislabelled airport
-    can't distort the continent zoom.
+  * ~290 airports in the source have no coordinates — these rows are dropped at
+    load.
+  * The source `Continent` column is unreliable (e.g. Alaskan airports tagged
+    "Africa"), which used to create absurd ~17 000 km "intra-continental" routes.
+    Each airport's continent is therefore **derived from its coordinates**
+    (`shared/geo.py`) so route scopes and the map stay geographically consistent.
+    ~100 of 967 airports are reclassified this way.
+  * Degenerate O-D pairs (two airports of the same metro at identical
+    coordinates, e.g. CMN/CAS in Casablanca) are rejected via a 100 km minimum
+    route distance, so there are no 0 km routes.
 
 ## Configuration
 
@@ -143,3 +149,141 @@ Environment variables (all optional) override defaults in `shared/config.py`:
 | `FLIGHTSCOPE_INTERCONTINENTAL_ROUTES` | `5000` | demo intercontinental routes |
 | `FLIGHTSCOPE_DEMO_SEED` | `42` | reproducibility |
 | `FLIGHTSCOPE_LOG_LEVEL` | `INFO` | logging verbosity |
+
+---
+
+## Live-data integration (API layer)
+
+An **additive** data platform runs *in parallel* with the demo data — the demo
+tables, analysis engine and default behaviour are never changed. The analysis
+reads only from the local database; the UI never calls an API.
+
+```
+External APIs → Connectors → Ingestion (sync) → Normalization → Database → Analysis → UI
+```
+
+### Setup
+
+```bash
+cp .env.example .env      # then fill in keys; .env is gitignored
+# AIRLABS_API_KEY is the only key needed for the primary supply source.
+```
+
+Secrets are loaded from `.env` via `python-dotenv` in `shared/config.py` — **no
+key is ever hard-coded**. Optional deps: `APScheduler` (scheduler), `pytrends`
+(Google Trends).
+
+### What's implemented vs prepared
+
+| Source | Role | Status |
+|---|---|---|
+| **AirLabs** | primary supply (schedules) | implemented (real request/parse) |
+| **OpenSky** | observed flights (validation) | implemented (arrivals) |
+| **OpenFlights** | airport metadata | implemented (CSV parse) |
+| **Aircraft DB** | type → seat capacity | implemented (lookup) |
+| **Eurostat** | demand calibration | prepared (request layer ready) |
+| **Amadeus** | price/availability | prepared (OAuth handshake ready) |
+| **Google Trends** | demand proxy | prepared (uses pytrends if installed) |
+
+Every connector inherits auth, retry+backoff, rate limiting, error mapping,
+validation and logging from `ingestion/connectors/base.py`.
+
+### Historical snapshots
+
+New tables (`routes`, `supply_observations`, `demand_observations`,
+`trend_observations`, `sync_runs`) carry `snapshot_date` / `week` / `valid_from` /
+`valid_to` / `created_at` / `updated_at`, so every sync appends a snapshot and
+trends (demand, capacity, market change) can be analysed later. `SupplyObservation`
+and `DemandObservation` are read back as the same neutral `RouteRead` the engine
+already consumes, so **the analysis engine is unchanged**.
+
+### Global, UI-independent data pipeline
+
+Data collection is a **separate process** from analysis and is **never** scoped to
+the current UI selection:
+
+* **Sync Now** (dev footer) and the scheduler update the *whole market* — all
+  airports → all routes → all airlines per route — regardless of the selected
+  airline/continent/task/filters.
+* **Analyze** and **Refresh** only read/recompute from the local DB; they issue no
+  API calls, so the UI stays fast.
+
+A supply crawl seeds AirLabs with **every catalogued airport** as a departure
+point (`coverage_scope = "Global"`; bound it with `SYNC_MAX_AIRPORTS` against rate
+limits). A probe + circuit breaker abort fast during an outage instead of hanging.
+
+Each run writes an append-only `SyncRun` (history) and upserts a `SyncState`
+(latest coverage per source/category): `data_source`, `coverage_scope`,
+`sync_status`, `sync_timestamp`. The dev footer separates **Analysis Status**
+(what you're analysing) from **Data Status** (record counts, last sync, coverage).
+
+### Background sync
+
+`ingestion/scheduler` (APScheduler) runs per-source jobs — **supply** daily,
+**demand** weekly, **metadata** monthly — each behaving exactly like "Sync Now"
+(global, UI-independent). Opt-in via `FLIGHTSCOPE_SCHEDULER_AUTOSTART=1`.
+
+### Data source switch
+
+The dev footer has a **Demo / Live** switch (default **Demo**). Live mode reads
+API-ingested snapshots and is empty until a sync populates it — demo data always
+remains available and untouched.
+
+### Live-platform env vars
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `AIRLABS_API_KEY` | – | AirLabs supply source (via `.env`) |
+| `FLIGHTSCOPE_DATA_SOURCE` | `demo` | default read source (`demo`\|`live`) |
+| `FLIGHTSCOPE_SCHEDULER_AUTOSTART` | `0` | auto-start background jobs |
+| `SYNC_INTERVAL_SCHEDULES` / `_PRICES` / `_DEMAND` / `_AIRPORT_METADATA` | daily/daily/weekly/monthly | per-source sync frequency (seconds) |
+
+---
+
+## Demand Data Platform (V1, rule-based)
+
+A transparent, versioned demand engine (no ML) that turns demand *signals* into a
+standardized value per O-D route and week. Data flows one way and is never fetched
+from the UI:
+
+```
+demand connectors → raw signals (stored) → normalization → model → calibration →
+demand_normalized (stored) → get_weekly_demand() → analysis engine
+```
+
+**The analysis engine uses one function only** — `DemandService.get_weekly_demand(origin, destination, week)` → `(estimated_weekly_passengers, demand_index, confidence_score)`. It has no knowledge of Google Trends, Wikipedia, Eurostat or normalization.
+
+### Sources (V1)
+`ingestion/demand/`: **Google Trends** (short-term interest, needs `pytrends`),
+**Wikipedia** pageviews (real Wikimedia API), **Eurostat** (calibration reference,
+prepared), **World Bank** (population/GDP, prepared). Each reuses the resilient
+connector base (retry, rate limit, error handling, logging, timestamps).
+
+### Model — Demand Index V1
+`0.45·Google + 0.15·Wikipedia + 0.15·Tourism + 0.10·Population + 0.10·GDP + 0.05·Event`
+(each component normalized to 0–100). Missing sources → weights **dynamically
+renormalized** over present components and confidence lowered. The model is
+injected (`RuleBasedDemandModelV1` implements the `DemandModel` protocol), so an
+ML forecaster drops in later with **no other change** — every row stores its
+`calculation_version` + `snapshot_date` for history/training.
+
+### Normalization (robust to outliers)
+Per signal type, values are clipped to the 5th/95th percentiles across routes,
+then min-max scaled to 0–100 — a single spiking route can't crush the rest.
+
+### Calibration → passengers
+`estimate = demand_index × calibration_factor` when a reference exists (Eurostat /
+historical / demo). Otherwise a transparent gravity fallback (distance, airport
+size, population, GDP) with a **lower confidence score**.
+
+### Confidence score (0–1)
+Rises with signal coverage, calibration and history: proxy-only ≈ **0.5**;
+trends + reference + history ≈ **0.9+**.
+
+### Tables & coverage
+`demand_raw_signal`, `demand_normalized`, `demand_calibration` (additive; demo
+untouched). The demand sync is **global** — it builds demand for all known routes
+independent of any UI selection; the UI only filters. Recommended cadences:
+Google/Wikipedia weekly, Eurostat monthly, macro yearly. The dev footer shows a
+**Demand Status** panel (last sync, O-D pairs, signal count, source status, last
+calculation version, average confidence).

@@ -4,16 +4,17 @@ from types import SimpleNamespace
 
 from database.repository.interfaces import AirlineRead, AirportRead
 from ingestion.demo_generator import DemoDataSource
+from ingestion.demo_generator.generator import _MIN_ROUTE_KM
 from shared.constants import INTERCONTINENTAL
 
 
 def _airports() -> list[AirportRead]:
     out: list[AirportRead] = []
-    # 8 Europe + 8 Asia airports on a small grid
+    # 8 Europe + 8 Asia airports on a grid spaced so every pair is >100 km apart.
     for i in range(8):
-        out.append(AirportRead(f"E{i:02d}", f"eu{i}", "X", 5.0 + i, 48.0 + i * 0.5, "Europe"))
+        out.append(AirportRead(f"E{i:02d}", f"eu{i}", "X", 5.0 + i * 2.0, 45.0 + i * 1.2, "Europe"))
     for i in range(8):
-        out.append(AirportRead(f"A{i:02d}", f"as{i}", "Y", 120.0 + i, 30.0 + i * 0.5, "Asia"))
+        out.append(AirportRead(f"A{i:02d}", f"as{i}", "Y", 120.0 + i * 2.0, 25.0 + i * 1.2, "Asia"))
     return out
 
 
@@ -51,6 +52,14 @@ def test_scope_endpoints_respect_geography():
         else:
             assert r["origin_continent"] == r["dest_continent"] == r["scope"]
         assert r["origin_iata"] != r["dest_iata"]
+
+
+def test_no_degenerate_short_routes():
+    # Every generated route must clear the minimum-distance floor (no 0 km /
+    # same-metro pairs).
+    batch = DemoDataSource(_airports(), _airlines(), _settings()).produce("2026-W27")
+    assert batch.route_rows
+    assert all(r["distance_km"] >= _MIN_ROUTE_KM for r in batch.route_rows)
 
 
 def test_route_count_capped_at_available_pairs():

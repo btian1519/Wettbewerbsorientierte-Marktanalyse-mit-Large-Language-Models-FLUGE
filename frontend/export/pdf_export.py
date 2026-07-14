@@ -42,13 +42,13 @@ def _detail_table(r) -> Table:
         ["Origin", f"{r.origin_name or r.origin_iata} ({r.origin_iata}) — {r.origin_country or r.origin_continent}"],
         ["Destination", f"{r.dest_name or r.dest_iata} ({r.dest_iata}) — {r.dest_country or r.dest_continent}"],
         ["Distance", f"{r.distance_km:,.0f} km"],
-        ["Average price", f"EUR {r.avg_price_eur:,.0f} ({r.price_source})"],
+        ["Average price", f"EUR {r.avg_price_eur:,.0f}"],
         ["Total demand", f"{format_pax(r.demand)} pax/wk"],
         ["Total supply", f"{format_pax(r.total_supply)} seats/wk"],
-        ["Supply share (selected airline)", f"{r.selected_airline_share * 100:.1f}%"],
+        ["Market share (selected airline)", f"{r.selected_airline_share * 100:.1f}%"],
         ["Active airlines on route", str(r.num_airlines)],
-        ["Delta (demand - supply)", f"{format_pax(r.delta_pax)} pax"],
-        ["Benefit", format_eur(r.benefit_eur)],
+        [r.gap_label, f"{format_pax(r.display_delta)} pax"],
+        ["Benefit", format_eur(r.display_benefit)],
     ]
     t = Table(rows, colWidths=[70 * mm, 95 * mm])
     t.setStyle(
@@ -87,8 +87,8 @@ def build_results_pdf(response: AnalysisResponse, airline_label: str) -> bytes:
         story.append(
             Paragraph(
                 f"{r.rank}. {r.origin_iata} &ndash; {r.dest_iata} "
-                f"&nbsp;—&nbsp; Benefit {format_eur(r.benefit_eur)} "
-                f"&nbsp;·&nbsp; {r.gap_label}: {format_pax(r.delta_pax)} pax",
+                f"&nbsp;—&nbsp; Benefit {format_eur(r.display_benefit)} "
+                f"&nbsp;·&nbsp; {r.gap_label}: {format_pax(r.display_delta)} pax",
                 ss["FSCard"],
             )
         )

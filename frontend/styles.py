@@ -43,13 +43,19 @@ _CSS = f"""
 }}
 .stButton > button[kind="primary"]:hover {{ filter: brightness(1.03); color: {C['green_text']}; }}
 
-/* ---- Dropdowns ----------------------------------------------------- */
+/* ---- Dropdowns (identical on start page & sidebar) ----------------- */
 div[data-baseweb="select"] > div {{
     background: {C['teal']}; border-radius: 30px; border: none; color: white;
     font-weight: 700; min-height: 52px;
+    display: flex; align-items: center;              /* vertically centre value */
 }}
 div[data-baseweb="select"] svg {{ color: white; fill: white; }}
 div[data-baseweb="select"] div {{ color: white; }}
+/* Non-editable: user may only pick from the list, not type or search. */
+div[data-baseweb="select"] input {{
+    pointer-events: none; caret-color: transparent; cursor: pointer;
+}}
+div[data-baseweb="select"] > div {{ cursor: pointer; }}
 
 /* ---- Result cards -------------------------------------------------- */
 .fs-card {{
@@ -71,6 +77,9 @@ div[data-baseweb="select"] div {{ color: white; }}
 .fs-detail-grid .k {{ color:#5a7c89; font-size:.82rem; }}
 .fs-detail-grid .v {{ font-weight: 700; text-align: right; color: {C['text_dark']}; }}
 .fs-detail-h {{ font-weight:800; color:{C['teal']}; margin:.2rem 0 .4rem; }}
+.fs-airport .row {{ display:flex; justify-content:space-between; gap:14px; padding:1px 0; }}
+.fs-airport .k {{ color:#5a7c89; font-size:.8rem; }}
+.fs-airport .v {{ font-weight:700; color:{C['text_dark']}; font-size:.82rem; text-align:right; }}
 
 /* ---- Sidebar ------------------------------------------------------- */
 section[data-testid="stSidebar"] {{ background: {C['grey_sidebar']}; }}

@@ -13,6 +13,7 @@ from pathlib import Path
 import pandas as pd
 
 from shared.config import Settings, get_settings
+from shared.geo import continent_from_coords
 from shared.logging_config import get_logger
 from shared.utils import extract_iata
 
@@ -87,18 +88,30 @@ class FileMasterDataSource:
         df = df.drop_duplicates(subset="iata", keep="first")
 
         rows: list[dict] = []
+        corrected = 0
         for _, r in df.iterrows():
+            lat, lon = float(r["lat"]), float(r["lon"])
+            file_continent = str(r["continent"]).strip()
+            # Derive continent from coordinates; the file's Continent column is
+            # unreliable (e.g. Alaskan airports tagged "Africa"). Fall back to the
+            # file label only if the coordinate is outside every region.
+            continent = continent_from_coords(lat, lon) or file_continent
+            if continent != file_continent:
+                corrected += 1
             rows.append(
                 {
                     "iata": str(r["iata"]).strip().upper()[:3],
                     "name": (str(r[name_col]).strip() if name_col and pd.notna(r[name_col]) else None),
                     "country": (str(r[land_col]).strip() if land_col and pd.notna(r[land_col]) else None),
-                    "lon": float(r["lon"]),
-                    "lat": float(r["lat"]),
-                    "continent": str(r["continent"]).strip(),
+                    "lon": lon,
+                    "lat": lat,
+                    "continent": continent,
                 }
             )
-        log.info("Parsed %d usable airports (with coordinates) from %s", len(rows), path.name)
+        log.info(
+            "Parsed %d usable airports from %s (continent corrected from coordinates for %d)",
+            len(rows), path.name, corrected,
+        )
         return rows
 
     @staticmethod

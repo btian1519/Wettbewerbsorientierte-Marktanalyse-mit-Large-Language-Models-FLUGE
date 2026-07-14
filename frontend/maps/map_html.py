@@ -16,6 +16,12 @@ from __future__ import annotations
 
 import json
 
+# Fixed rotation offset (degrees, clockwise) added to the computed movement
+# heading so the plane glyph's nose points along the flight direction. Adjust
+# this single value if the plane icon is ever swapped for one with a different
+# intrinsic orientation.
+AIRCRAFT_HEADING_OFFSET_DEG = 0
+
 _JS_TEMPLATE = r"""
 <div id="fs-map" style="width:100%;position:relative;">
   <canvas id="cv" style="width:100%;display:block;border-radius:14px;"></canvas>
@@ -23,6 +29,8 @@ _JS_TEMPLATE = r"""
 <script>
 const D = __PAYLOAD__;
 const C = D.colors;
+// Fixed rotation offset (radians) so the plane glyph's nose faces the heading.
+const AIRCRAFT_HEADING_OFFSET = __HEADING_OFFSET_DEG__ * Math.PI / 180;
 const host = document.getElementById('fs-map');
 const cv = document.getElementById('cv');
 const ctx = cv.getContext('2d');
@@ -140,8 +148,8 @@ function bezTan(r, t) {
 function drawPlane(x, y, ang) {
   ctx.save();
   ctx.translate(x, y);
-  // Glyph intrinsically points NE (~ -45°); offset so it faces the heading.
-  ctx.rotate(ang + Math.PI / 4);
+  // Movement heading + fixed glyph offset so the nose points along the route.
+  ctx.rotate(ang + AIRCRAFT_HEADING_OFFSET);
   ctx.font = '19px "Segoe UI Symbol","Apple Color Emoji",sans-serif';
   ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
   ctx.shadowColor = 'rgba(0,0,0,0.25)'; ctx.shadowBlur = 3;
@@ -185,4 +193,8 @@ requestAnimationFrame(loop);
 
 
 def build_map_html(payload: dict) -> str:
-    return _JS_TEMPLATE.replace("__PAYLOAD__", json.dumps(payload, separators=(",", ":")))
+    return (
+        _JS_TEMPLATE
+        .replace("__HEADING_OFFSET_DEG__", str(AIRCRAFT_HEADING_OFFSET_DEG))
+        .replace("__PAYLOAD__", json.dumps(payload, separators=(",", ":")))
+    )

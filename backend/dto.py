@@ -16,6 +16,7 @@ from shared.constants import (
     DEFAULT_MARGE_AVERAGE,
     DEFAULT_MIN_DISTANCE_EFFICIENCY,
     DEFAULT_NETWORK_AVAILABILITY,
+    GAP_LABEL_OVERCAPACITY,
     Task,
 )
 
@@ -68,6 +69,24 @@ class RouteResult:
     num_airlines: int          # active carriers on the route (count only)
     selected_airline_share: float  # supply share of the selected airline (0..1)
     gap_label: str             # "Market Gap" or "Overcapacities"
+
+    @property
+    def is_overcapacity(self) -> bool:
+        return self.gap_label == GAP_LABEL_OVERCAPACITY
+
+    @property
+    def display_benefit(self) -> float:
+        """Benefit for presentation: absolute value in overcapacity mode.
+
+        Internally ``benefit_eur`` stays signed (negative for overcapacity) so
+        ranking is unaffected; only the displayed figure uses ``abs``.
+        """
+        return abs(self.benefit_eur) if self.is_overcapacity else self.benefit_eur
+
+    @property
+    def display_delta(self) -> float:
+        """Delta/overcapacity for presentation: absolute value in overcapacity mode."""
+        return abs(self.delta_pax) if self.is_overcapacity else self.delta_pax
 
 
 @dataclass(frozen=True, slots=True)

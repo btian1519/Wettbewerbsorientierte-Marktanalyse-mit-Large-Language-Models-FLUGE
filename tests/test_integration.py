@@ -39,6 +39,18 @@ def test_opportunities_surface_unserved_route(seeded_repos):
     assert resp.results[0].benefit_eur > 0
 
 
+def test_opportunities_exclude_negative_benefit(seeded_repos):
+    catalog_repo, route_repo = seeded_repos
+    svc = AnalysisService(route_repo, CatalogService(catalog_repo))
+    resp = svc.analyze(
+        AnalysisRequest(airline_iata="LH", scope="Europe", task=Task.OPPORTUNITIES, filters=FilterSettings())
+    )
+    # Every opportunity has non-negative benefit ...
+    assert all(r.benefit_eur >= 0 for r in resp.results)
+    # ... and the oversupplied route 1 (AAA->BBB, supply 3000 > demand 1000) is gone.
+    assert all(not (r.origin_iata == "AAA" and r.dest_iata == "BBB") for r in resp.results)
+
+
 def test_overcapacities_only_airline_routes_and_negative(seeded_repos):
     catalog_repo, route_repo = seeded_repos
     svc = AnalysisService(route_repo, CatalogService(catalog_repo))

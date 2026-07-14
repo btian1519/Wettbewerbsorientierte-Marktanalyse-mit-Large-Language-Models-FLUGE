@@ -17,12 +17,15 @@ from backend.pricing import PriceResolver
 from backend.ranking import rank_scored
 from backend.services.catalog_service import CatalogService
 from database.repository.interfaces import RouteRepository
-from shared.constants import Task
+from shared.constants import GAP_LABEL_OPPORTUNITY, GAP_LABEL_OVERCAPACITY, Task
 from shared.logging_config import get_logger
 
 log = get_logger("backend.analysis_service")
 
-_GAP_LABEL = {Task.OPPORTUNITIES: "Market Gap", Task.OVERCAPACITIES: "Overcapacities"}
+_GAP_LABEL = {
+    Task.OPPORTUNITIES: GAP_LABEL_OPPORTUNITY,
+    Task.OVERCAPACITIES: GAP_LABEL_OVERCAPACITY,
+}
 
 
 class AnalysisService:
@@ -63,6 +66,12 @@ class AnalysisService:
                     request.filters, request.task, request.airline_iata,
                 )
             )
+
+        # A real market opportunity has unmet demand → non-negative benefit.
+        # Oversupplied routes (negative benefit) are not opportunities, so drop
+        # them in "Find new opportunities" mode.
+        if request.task == Task.OPPORTUNITIES:
+            scored = [s for s in scored if s.benefit_eur >= 0]
 
         top = rank_scored(scored, request.task)
         results = [self._to_result(i + 1, sr, request.task) for i, sr in enumerate(top)]

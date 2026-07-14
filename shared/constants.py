@@ -40,6 +40,11 @@ class Task(str, Enum):
 
 TASKS: Final[tuple[str, ...]] = tuple(t.value for t in Task)
 
+# Mode-dependent label used both in the result cards and the detail view for the
+# demand-minus-supply figure.
+GAP_LABEL_OPPORTUNITY: Final[str] = "Market Gap"
+GAP_LABEL_OVERCAPACITY: Final[str] = "Overcapacities"
+
 
 # --------------------------------------------------------------------------- #
 # Analysis model defaults (see backend.analysis.engine for the formula)
@@ -56,3 +61,6 @@ DISTANCE_EFFICIENCY_SPREAD_KM: Final[float] = 10000.0
 TOP_N_RESULTS: Final[int] = 10
 TOP_VISIBLE_RESULTS: Final[int] = 3
 SHOW_MORE_RESULTS: Final[int] = 7  # 3 + 7 = 10
+# "Show more" is only offered when there is at least one result beyond the
+# initially visible set — i.e. fewer than this many results disables the button.
+SHOW_MORE_MIN_RESULTS: Final[int] = TOP_VISIBLE_RESULTS + 1  # 4

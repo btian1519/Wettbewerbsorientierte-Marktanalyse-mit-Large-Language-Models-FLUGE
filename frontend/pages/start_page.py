@@ -6,7 +6,7 @@ import streamlit as st
 
 from backend.container import Container
 from frontend.components import airline_dropdown, scope_dropdown, task_dropdown
-from frontend.state import build_request, go_to, inputs_complete
+from frontend.state import build_request, go_to, inputs_complete, save_input_snapshot
 from shared.constants import TOP_VISIBLE_RESULTS
 from shared.logging_config import get_logger
 
@@ -41,8 +41,11 @@ def render_start_page(container: Container) -> None:
 
 def _run_and_go(container: Container) -> None:
     request = build_request()
+    analysis = container.analysis_for(st.session_state.get("data_source", "demo"))
     with st.spinner("Analyzing routes..."):
-        st.session_state.response = container.analysis_service.analyze(request)
+        st.session_state.response = analysis.analyze(request)
     st.session_state.visible = TOP_VISIBLE_RESULTS
+    # Initial computation: snapshot inputs but keep Undo disabled until first Refresh.
+    save_input_snapshot(mark_refreshed=False)
     go_to("results")
     st.rerun()

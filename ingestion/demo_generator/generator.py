@@ -29,6 +29,10 @@ from shared.utils import haversine_km
 log = get_logger("ingestion.demo_generator")
 
 _HUB_FRACTION = 0.12  # extra random hubs on top of airline bases
+# Minimum O-D great-circle distance (km). Rejects degenerate pairs such as two
+# airports serving the same metro at identical coordinates (e.g. CMN/CAS in
+# Casablanca), which would otherwise create nonsensical ~0 km routes.
+_MIN_ROUTE_KM = 100.0
 
 
 class DemoDataSource:
@@ -170,6 +174,16 @@ class DemoDataSource:
         )
 
     # ------------------------------------------------------------------ #
+    # Pair validity
+    # ------------------------------------------------------------------ #
+    def _distance(self, oi: int, di: int) -> float:
+        return haversine_km(self._lat[oi], self._lon[oi], self._lat[di], self._lon[di])
+
+    def _valid_pair(self, oi: int, di: int) -> bool:
+        """A usable O-D pair: distinct airports at least ``_MIN_ROUTE_KM`` apart."""
+        return oi != di and self._distance(oi, di) >= _MIN_ROUTE_KM
+
+    # ------------------------------------------------------------------ #
     # Pair sampling
     # ------------------------------------------------------------------ #
     def _sample_intra_pairs(
@@ -181,8 +195,13 @@ class DemoDataSource:
         mass_sub = mass[indices]
 
         if max_pairs <= int(target * 1.5):
-            # Small scope: enumerate all directed pairs, then weight-sample down.
-            all_pairs = [(int(a), int(b)) for a in indices for b in indices if a != b]
+            # Small scope: enumerate all valid directed pairs, then weight-sample.
+            all_pairs = [
+                (int(a), int(b))
+                for a in indices
+                for b in indices
+                if a != b and self._valid_pair(int(a), int(b))
+            ]
             if len(all_pairs) <= target:
                 return all_pairs
             weights = np.array([mass[a] * mass[b] for a, b in all_pairs])
@@ -201,7 +220,7 @@ class DemoDataSource:
             da = indices[rng.choice(n, size=block, p=p)]
             for a, b in zip(oa, da):
                 key = (int(a), int(b))
-                if a != b and key not in seen:
+                if key not in seen and self._valid_pair(int(a), int(b)):
                     seen.add(key)
                     pairs.append(key)
                     if len(pairs) >= target:
@@ -223,7 +242,7 @@ class DemoDataSource:
             da = rng.choice(self._n, size=block, p=p)
             for a, b in zip(oa, da):
                 a, b = int(a), int(b)
-                if a != b and continent[a] != continent[b] and (a, b) not in seen:
+                if continent[a] != continent[b] and (a, b) not in seen and self._valid_pair(a, b):
                     seen.add((a, b))
                     pairs.append((a, b))
                     if len(pairs) >= target:

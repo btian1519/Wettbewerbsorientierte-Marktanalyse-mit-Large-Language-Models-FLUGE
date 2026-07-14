@@ -9,5 +9,12 @@ pydeck>=0.9            # prepared alternative map backend
 plotly>=6.0            # prepared alternative map backend
 reportlab>=4.0         # PDF export
 
+# Live-data / demand platform
+requests>=2.31         # API connectors (HTTP)
+tenacity>=8.2          # retry with backoff
+python-dotenv>=1.0     # load .env secrets/config
+APScheduler>=3.10      # background sync scheduler
+pytrends>=4.9          # Google Trends demand signal (optional; enables the source)
+
 # Dev / test
 pytest>=8.0

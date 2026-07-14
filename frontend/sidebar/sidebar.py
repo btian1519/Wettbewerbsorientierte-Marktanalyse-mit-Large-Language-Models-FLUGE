@@ -13,7 +13,15 @@ import streamlit as st
 from backend.container import Container
 from frontend.components import airline_dropdown, scope_dropdown, task_dropdown
 from frontend.sidebar.dev_footer import render_dev_footer
-from frontend.state import build_request, inputs_complete, reset_filters
+from frontend.state import (
+    build_request,
+    can_undo,
+    filter_slider,
+    inputs_complete,
+    request_clear_filters,
+    request_undo,
+    save_input_snapshot,
+)
 from shared.constants import TOP_VISIBLE_RESULTS
 from shared.logging_config import get_logger
 
@@ -34,11 +42,14 @@ def render_sidebar(container: Container) -> None:
 
         # --- Actions ---------------------------------------------------
         cundo, cclear = st.columns(2)
-        if cundo.button("Undo Changes", use_container_width=True):
-            st.session_state.filters = dict(st.session_state.filters_committed)
+        # Undo restores ALL inputs to the last computed snapshot; disabled
+        # (greyed out) until at least one Refresh has been performed. The actual
+        # restore runs at the top of the next rerun (before widgets exist).
+        if cundo.button("Undo Changes", use_container_width=True, disabled=not can_undo()):
+            request_undo()
             st.rerun()
         if cclear.button("Clear All Filters", use_container_width=True):
-            reset_filters()
+            request_clear_filters()
             st.rerun()
 
         if st.button(
@@ -53,31 +64,22 @@ def render_sidebar(container: Container) -> None:
 
 def _render_filters() -> None:
     with st.expander("Additional Filters", expanded=False):
-        f = st.session_state.filters
-        margin = st.slider(
-            "Average Margin — Marge_average", 0, 100,
-            int(round(f["marge_average"] * 100)), format="%d%%",
-        )
-        net = st.slider(
-            "Network Availability — Network_availability", 0, 100,
-            int(round(f["network_availability"] * 100)), format="%d%%",
-        )
-        dist = st.slider(
-            "Distance Efficiency — distance_efficiency (min)", 0, 100,
-            int(round(f["min_distance_efficiency"] * 100)), format="%d%%",
-        )
+        # Keyed sliders: their values live in session_state (sl_margin/net/dist)
+        # and are read back by state.current_filter_settings(). Streamlit ignores
+        # an externally pre-set session_state value on a widget's *first* render,
+        # so filter_slider() passes value= only until the key is established.
+        filter_slider("Average Margin — Marge_average", "sl_margin")
+        filter_slider("Network Availability — Network_availability", "sl_net")
+        filter_slider("Distance Efficiency — distance_efficiency (min)", "sl_dist")
         st.caption("Further filter variables can be plugged in here (placeholder).")
-        st.session_state.filters = {
-            "marge_average": margin / 100.0,
-            "network_availability": net / 100.0,
-            "min_distance_efficiency": dist / 100.0,
-        }
 
 
 def _refresh(container: Container) -> None:
     request = build_request()
+    analysis = container.analysis_for(st.session_state.get("data_source", "demo"))
     with st.spinner("Recomputing..."):
-        st.session_state.response = container.analysis_service.analyze(request)
+        st.session_state.response = analysis.analyze(request)
     st.session_state.visible = TOP_VISIBLE_RESULTS
-    st.session_state.filters_committed = dict(st.session_state.filters)
+    # Successful Refresh: snapshot all inputs and enable Undo.
+    save_input_snapshot(mark_refreshed=True)
     st.rerun()

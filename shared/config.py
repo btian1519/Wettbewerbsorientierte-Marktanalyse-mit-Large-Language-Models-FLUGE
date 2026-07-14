@@ -17,6 +17,21 @@ from pathlib import Path
 # Project root = directory that contains this ``shared`` package's parent.
 PROJECT_ROOT: Path = Path(__file__).resolve().parent.parent
 
+# Load a local .env (if present) so secrets/keys never live in code. Safe no-op
+# when python-dotenv is absent or the file is missing.
+try:  # pragma: no cover - trivial import guard
+    from dotenv import load_dotenv
+
+    load_dotenv(PROJECT_ROOT / ".env")
+except Exception:  # pragma: no cover
+    pass
+
+
+def _env_opt(name: str) -> str | None:
+    """Optional environment variable (None when unset/empty)."""
+    raw = os.environ.get(name)
+    return raw if raw not in (None, "") else None
+
 
 def _env_int(name: str, default: int) -> int:
     raw = os.environ.get(name)
@@ -56,6 +71,41 @@ class Settings:
     # --- Ingestion mode -----------------------------------------------------
     # "demo" | "api" — only "demo" is wired up; "api" is prepared via interfaces.
     ingestion_mode: str = field(default_factory=lambda: _env_str("FLIGHTSCOPE_INGESTION_MODE", "demo"))
+    # Default data source the analysis reads from: "demo" | "live". The UI can
+    # override this per session; demo stays the default and is never overwritten.
+    default_data_source: str = field(default_factory=lambda: _env_str("FLIGHTSCOPE_DATA_SOURCE", "demo"))
+
+    # --- External API credentials (loaded from env/.env; never hard-coded) --
+    airlabs_api_key: str | None = field(default_factory=lambda: _env_opt("AIRLABS_API_KEY"))
+    opensky_client_id: str | None = field(default_factory=lambda: _env_opt("OPENSKY_CLIENT_ID"))
+    opensky_client_secret: str | None = field(default_factory=lambda: _env_opt("OPENSKY_CLIENT_SECRET"))
+    amadeus_client_id: str | None = field(default_factory=lambda: _env_opt("AMADEUS_CLIENT_ID"))
+    amadeus_client_secret: str | None = field(default_factory=lambda: _env_opt("AMADEUS_CLIENT_SECRET"))
+    # Eurostat and Google Trends need no API key.
+
+    # --- Background sync frequencies (seconds) per source category ----------
+    # Defaults follow the brief: airport metadata monthly, schedules daily,
+    # prices daily, demand proxies weekly. Each is env-overridable.
+    sync_interval_airport_metadata: int = field(
+        default_factory=lambda: _env_int("SYNC_INTERVAL_AIRPORT_METADATA", 30 * 24 * 3600))
+    sync_interval_schedules: int = field(
+        default_factory=lambda: _env_int("SYNC_INTERVAL_SCHEDULES", 24 * 3600))
+    sync_interval_prices: int = field(
+        default_factory=lambda: _env_int("SYNC_INTERVAL_PRICES", 24 * 3600))
+    sync_interval_demand: int = field(
+        default_factory=lambda: _env_int("SYNC_INTERVAL_DEMAND", 7 * 24 * 3600))
+    # Whether the APScheduler background scheduler should auto-start with the app.
+    scheduler_autostart: bool = field(
+        default_factory=lambda: os.environ.get("FLIGHTSCOPE_SCHEDULER_AUTOSTART") == "1")
+    # Upper bound on departure airports crawled per supply sync (0 = all = full
+    # market / "Global" coverage). The sync is deliberately independent of any UI
+    # selection; this only bounds request volume against API rate limits.
+    sync_max_airports: int = field(default_factory=lambda: _env_int("SYNC_MAX_AIRPORTS", 0))
+    # Demand coverage is built independently of supply, directly from the AIRPORTS
+    # catalog. Bounded because demand proxies (e.g. Google Trends) are heavily
+    # rate-limited: pool of airports for O-D generation, and a cap on total pairs.
+    demand_max_airports: int = field(default_factory=lambda: _env_int("DEMAND_MAX_AIRPORTS", 15))
+    demand_max_routes: int = field(default_factory=lambda: _env_int("DEMAND_MAX_ROUTES", 50))
 
     # --- Logging ------------------------------------------------------------
     log_level: str = field(default_factory=lambda: _env_str("FLIGHTSCOPE_LOG_LEVEL", "INFO"))

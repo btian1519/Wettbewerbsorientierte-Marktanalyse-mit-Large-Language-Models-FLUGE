@@ -13,7 +13,7 @@ from backend.container import Container
 from frontend.components import render_result_card
 from frontend.export import build_results_pdf
 from frontend.maps import MapRenderer
-from shared.constants import TOP_N_RESULTS, TOP_VISIBLE_RESULTS
+from shared.constants import SHOW_MORE_MIN_RESULTS, TOP_N_RESULTS, TOP_VISIBLE_RESULTS
 
 
 def render_results_page(container: Container, map_renderer: MapRenderer) -> None:
@@ -46,7 +46,12 @@ def render_results_page(container: Container, map_renderer: MapRenderer) -> None
     # --- Show more / Export --------------------------------------------
     c1, c2, _ = st.columns([1.2, 1.2, 3])
     with c1:
-        can_show_more = visible < min(TOP_N_RESULTS, len(response.results))
+        # Disabled when fewer than SHOW_MORE_MIN_RESULTS (4) results qualify, or
+        # when everything is already shown.
+        can_show_more = (
+            len(response.results) >= SHOW_MORE_MIN_RESULTS
+            and visible < min(TOP_N_RESULTS, len(response.results))
+        )
         if st.button("Show more", use_container_width=True, disabled=not can_show_more):
             st.session_state.visible = min(TOP_N_RESULTS, len(response.results))
             st.rerun()
