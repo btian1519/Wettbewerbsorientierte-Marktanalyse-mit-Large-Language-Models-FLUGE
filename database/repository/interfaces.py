@@ -23,6 +23,7 @@ class AirportRead:
     lon: float
     lat: float
     continent: str
+    city: str | None = None
 
 
 @dataclass(frozen=True, slots=True)

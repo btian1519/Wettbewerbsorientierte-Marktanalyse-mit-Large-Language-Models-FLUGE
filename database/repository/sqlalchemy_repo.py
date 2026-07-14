@@ -54,7 +54,7 @@ class SqlAlchemyCatalogRepository:
         with session_scope() as s:
             rows = s.execute(select(Airport)).scalars().all()
             return [
-                AirportRead(a.iata, a.name, a.country, a.lon, a.lat, a.continent)
+                AirportRead(a.iata, a.name, a.country, a.lon, a.lat, a.continent, a.city)
                 for a in rows
             ]
 

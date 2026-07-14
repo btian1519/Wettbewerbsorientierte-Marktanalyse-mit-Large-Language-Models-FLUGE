@@ -37,18 +37,25 @@ def _styles():
     return ss
 
 
+def _airport_line(name, iata, city, country, continent) -> str:
+    """`Name (IATA) — City, Country — Region`, dropping any missing parts."""
+    head = f"{name} ({iata})" if name else iata
+    loc = ", ".join(p for p in (city, country) if p)
+    return " — ".join(p for p in (head, loc, continent) if p)
+
+
 def _detail_table(r) -> Table:
     rows = [
-        ["Origin", f"{r.origin_name or r.origin_iata} ({r.origin_iata}) — {r.origin_country or r.origin_continent}"],
-        ["Destination", f"{r.dest_name or r.dest_iata} ({r.dest_iata}) — {r.dest_country or r.dest_continent}"],
+        ["Origin", _airport_line(r.origin_name, r.origin_iata, r.origin_city, r.origin_country, r.origin_continent)],
+        ["Destination", _airport_line(r.dest_name, r.dest_iata, r.dest_city, r.dest_country, r.dest_continent)],
         ["Distance", f"{r.distance_km:,.0f} km"],
         ["Average price", f"EUR {r.avg_price_eur:,.0f}"],
         ["Total demand", f"{format_pax(r.demand)} pax/wk"],
         ["Total supply", f"{format_pax(r.total_supply)} seats/wk"],
         ["Market share (selected airline)", f"{r.selected_airline_share * 100:.1f}%"],
         ["Active airlines on route", str(r.num_airlines)],
-        [r.gap_label, f"{format_pax(r.display_delta)} pax"],
-        ["Benefit", format_eur(r.display_benefit)],
+        [r.gap_label, f"{format_pax(r.display_delta)} pax/wk"],
+        ["Benefit", f"{format_eur(r.display_benefit)}/wk"],
     ]
     t = Table(rows, colWidths=[70 * mm, 95 * mm])
     t.setStyle(
@@ -87,8 +94,8 @@ def build_results_pdf(response: AnalysisResponse, airline_label: str) -> bytes:
         story.append(
             Paragraph(
                 f"{r.rank}. {r.origin_iata} &ndash; {r.dest_iata} "
-                f"&nbsp;—&nbsp; Benefit {format_eur(r.display_benefit)} "
-                f"&nbsp;·&nbsp; {r.gap_label}: {format_pax(r.display_delta)} pax",
+                f"&nbsp;—&nbsp; Benefit {format_eur(r.display_benefit)}/wk "
+                f"&nbsp;·&nbsp; {r.gap_label}: {format_pax(r.display_delta)} pax/wk",
                 ss["FSCard"],
             )
         )

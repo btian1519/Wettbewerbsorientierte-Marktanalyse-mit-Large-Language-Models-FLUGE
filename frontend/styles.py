@@ -28,6 +28,7 @@ _CSS = f"""
 .fs-subtitle {{ font-size: 1.25rem; text-align: center; color: #333; margin-bottom: 2.2rem; }}
 .fs-hint {{ text-align: center; color: #555; font-style: italic; margin-top: 1.4rem; }}
 .fs-results-title {{ font-size: 1.9rem; font-weight: 800; color: {C['text_dark']}; margin: .2rem 0 1rem; }}
+.fs-section-title {{ font-size: 1.5rem; font-weight: 800; color: {C['text_dark']}; text-align: left; margin: .2rem 0 1rem; }}
 
 /* ---- Buttons ------------------------------------------------------- */
 .stButton > button {{
@@ -80,6 +81,9 @@ div[data-baseweb="select"] > div {{ cursor: pointer; }}
 .fs-airport .row {{ display:flex; justify-content:space-between; gap:14px; padding:1px 0; }}
 .fs-airport .k {{ color:#5a7c89; font-size:.8rem; }}
 .fs-airport .v {{ font-weight:700; color:{C['text_dark']}; font-size:.82rem; text-align:right; }}
+.fs-airport .apt-name {{ font-weight:700; color:{C['text_dark']}; font-size:.9rem; }}
+.fs-airport .apt-loc {{ color:#5a7c89; font-size:.82rem; }}
+.fs-airport .apt-region {{ color:#5a7c89; font-size:.8rem; }}
 
 /* ---- Sidebar ------------------------------------------------------- */
 section[data-testid="stSidebar"] {{ background: {C['grey_sidebar']}; }}

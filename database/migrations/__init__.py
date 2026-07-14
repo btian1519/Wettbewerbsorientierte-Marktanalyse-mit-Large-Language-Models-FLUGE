@@ -19,6 +19,7 @@ log = get_logger("database.migrations")
 # existing SQLite DB forward-compatible without dropping data.
 _ADDITIVE_COLUMNS: dict[str, list[tuple[str, str]]] = {
     "sync_runs": [("coverage_scope", "VARCHAR(32)")],
+    "airports": [("city", "VARCHAR(96)")],  # added with the extended AIRPORTS import
 }
 
 

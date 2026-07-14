@@ -38,6 +38,12 @@ def render_results_page(container: Container, map_renderer: MapRenderer) -> None
 
     st.write("")
 
+    # --- Section subheading (shown for every mode) ---------------------
+    st.markdown(
+        '<div class="fs-section-title">Recommended priorities...</div>',
+        unsafe_allow_html=True,
+    )
+
     # --- Ranked result cards -------------------------------------------
     for r in shown:
         render_result_card(r, response.task.value)

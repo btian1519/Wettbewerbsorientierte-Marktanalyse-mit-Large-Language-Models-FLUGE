@@ -110,6 +110,8 @@ class AnalysisService:
             dest_iata=r.dest_iata,
             origin_name=origin.name if origin else None,
             dest_name=dest.name if dest else None,
+            origin_city=origin.city if origin else None,
+            dest_city=dest.city if dest else None,
             origin_country=origin.country if origin else None,
             dest_country=dest.country if dest else None,
             origin_continent=r.origin_continent,

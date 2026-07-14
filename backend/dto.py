@@ -51,6 +51,8 @@ class RouteResult:
     dest_iata: str
     origin_name: str | None
     dest_name: str | None
+    origin_city: str | None
+    dest_city: str | None
     origin_country: str | None
     dest_country: str | None
     origin_continent: str
@@ -104,5 +106,5 @@ class AnalysisResponse:
         return (
             "Explore new opportunities:"
             if self.task == Task.OPPORTUNITIES
-            else "Reduce these overcapacities:"
+            else "Reduce current overcapacities:"
         )

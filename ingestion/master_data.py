@@ -19,6 +19,32 @@ from shared.utils import extract_iata
 
 log = get_logger("ingestion.master_data")
 
+# Excel error literals and common placeholders that must NOT be imported.
+_INVALID_CELL_VALUES = {
+    "#N/A", "#VALUE!", "#REF!", "#DIV/0!", "#NAME?", "#NULL!", "#NUM!",
+    "#GETTING_DATA", "#SPILL!", "#CALC!",
+    "NAN", "NONE", "NULL", "N/A", "UNKNOWN",
+}
+
+
+def _clean_text(value) -> str | None:
+    """Trim/strip a cell to a clean string, or ``None`` for empty/error values.
+
+    Handles NaN, blank cells and Excel error literals — the record is still kept,
+    only the individual field becomes ``None``. Unicode is preserved.
+    """
+    if value is None:
+        return None
+    try:
+        if pd.isna(value):
+            return None
+    except (TypeError, ValueError):  # non-scalar; fall through
+        pass
+    text = str(value).strip()
+    if not text or text.upper() in _INVALID_CELL_VALUES:
+        return None
+    return text
+
 
 class FileMasterDataSource:
     """Loads airports from Excel and airlines from the Python data file."""
@@ -75,6 +101,7 @@ class FileMasterDataSource:
         lat_col = self._find(col, "reitengrad", "lat")  # German "Breitengrad"
         name_col = self._find(col, "airport", "name", required=False)
         land_col = self._find(col, "land", "country", required=False)
+        city_col = self._find(col, "stadt", "city", "ort", required=False)
 
         df = df.rename(
             columns={
@@ -84,33 +111,51 @@ class FileMasterDataSource:
                 lat_col: "lat",
             }
         )
+        # Coordinates stay mandatory (unchanged behaviour): rows without valid
+        # iata/lat/lon/continent are dropped so the map & distances remain correct.
         df = df.dropna(subset=["iata", "lon", "lat", "continent"])
         df = df.drop_duplicates(subset="iata", keep="first")
 
         rows: list[dict] = []
         corrected = 0
+        counts = {"name": 0, "city": 0, "country": 0, "ignored": 0}
         for _, r in df.iterrows():
             lat, lon = float(r["lat"]), float(r["lon"])
             file_continent = str(r["continent"]).strip()
             # Derive continent from coordinates; the file's Continent column is
-            # unreliable (e.g. Alaskan airports tagged "Africa"). Fall back to the
-            # file label only if the coordinate is outside every region.
+            # unreliable (e.g. Alaskan airports tagged "Africa").
             continent = continent_from_coords(lat, lon) or file_continent
             if continent != file_continent:
                 corrected += 1
+
+            # Additional descriptive fields — cleaned to None on empty/error cells,
+            # without dropping the record or affecting the existing fields.
+            name = _clean_text(r[name_col]) if name_col else None
+            city = _clean_text(r[city_col]) if city_col else None
+            country = _clean_text(r[land_col]) if land_col else None
+            for value, source in ((name, name_col), (city, city_col), (country, land_col)):
+                if source is not None and value is None:
+                    counts["ignored"] += 1
+            counts["name"] += name is not None
+            counts["city"] += city is not None
+            counts["country"] += country is not None
+
             rows.append(
                 {
                     "iata": str(r["iata"]).strip().upper()[:3],
-                    "name": (str(r[name_col]).strip() if name_col and pd.notna(r[name_col]) else None),
-                    "country": (str(r[land_col]).strip() if land_col and pd.notna(r[land_col]) else None),
+                    "name": name,
+                    "city": city,
+                    "country": country,
                     "lon": lon,
                     "lat": lat,
                     "continent": continent,
                 }
             )
         log.info(
-            "Parsed %d usable airports from %s (continent corrected from coordinates for %d)",
-            len(rows), path.name, corrected,
+            "Parsed %d airports from %s | names=%d cities=%d countries=%d | "
+            "ignored %d empty/invalid cells | continent corrected for %d",
+            len(rows), path.name, counts["name"], counts["city"], counts["country"],
+            counts["ignored"], corrected,
         )
         return rows
 
