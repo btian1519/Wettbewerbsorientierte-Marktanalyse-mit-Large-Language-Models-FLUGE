@@ -28,6 +28,7 @@ from ingestion.connectors.base import BaseConnector, ConnectorStatus, QuotaExcee
 from ingestion.normalization import normalize_schedules
 from shared.config import Settings, get_settings
 from shared.logging_config import get_logger
+from shared.rate_limit import RATE_LIMIT_STATUS, looks_rate_limited as _looks_rate_limited
 from shared.sources import DataSource, SyncCategory
 
 log = get_logger("ingestion.sync_service")
@@ -88,6 +89,8 @@ class SyncService:
     # ------------------------------------------------------------------ #
     def sync_supply(self, week: str | None = None) -> SyncResult:
         result = SyncResult(DataSource.AIRLABS.value, SyncCategory.SCHEDULES.value, "running")
+        if self._is_paused(result.source, result.category):
+            return self._skip_paused(result)
         connector = self._connectors.get(DataSource.AIRLABS)
         week = week or current_iso_week()
         snapshot = date.today()
@@ -167,6 +170,8 @@ class SyncService:
         result = SyncResult(
             DataSource.GOOGLE_TRENDS.value, SyncCategory.DEMAND.value, "skipped", coverage_scope="Global"
         )
+        if self._is_paused(result.source, result.category):
+            return self._skip_paused(result)
         try:
             if self._demand_service is None:
                 result.error = "demand service not wired"
@@ -189,6 +194,8 @@ class SyncService:
         result = SyncResult(
             DataSource.OPENFLIGHTS.value, SyncCategory.AIRPORT_METADATA.value, "running", coverage_scope="Global"
         )
+        if self._is_paused(result.source, result.category):
+            return self._skip_paused(result)
         connector = self._connectors.get(DataSource.OPENFLIGHTS)
         try:
             if not isinstance(connector, OpenFlightsConnector):
@@ -218,8 +225,32 @@ class SyncService:
             return self.sync_airport_metadata()
         return None
 
-    def _finalize(self, result: SyncResult) -> None:
+    # ------------------------------------------------------------------ #
+    # Rate-limit circuit breaker (persisted, per source/category)
+    # ------------------------------------------------------------------ #
+    def _is_paused(self, source: str, category: str) -> bool:
+        """Whether this source/category was paused by an earlier provider limit."""
+        state = self._repo.coverage_for(source, category)
+        return bool(state and state["sync_status"] == RATE_LIMIT_STATUS)
+
+    def _skip_paused(self, result: SyncResult) -> SyncResult:
+        """Record a skipped run for a paused source WITHOUT clearing its paused state."""
+        result.status = "skipped"
+        result.error = "Paused — provider rate/quota limit reached; sync stopped for this source."
         result.finished_at = datetime.now(timezone.utc)
+        self._record_run(result)  # history only; the persisted pause stays in place
+        log.info("Skipping %s/%s — paused after an earlier provider limit.",
+                 result.source, result.category)
+        return result
+
+    def resume_paused_sources(self) -> int:
+        """Clear all persisted rate-limit pauses so those sources sync again."""
+        resumed = self._repo.clear_sync_status(RATE_LIMIT_STATUS)
+        if resumed:
+            log.info("Resumed %d rate-limited source(s).", resumed)
+        return resumed
+
+    def _record_run(self, result: SyncResult) -> None:
         self._repo.record_sync_run(
             {
                 "source": result.source,
@@ -232,6 +263,16 @@ class SyncService:
                 "error": result.error,
             }
         )
+
+    def _finalize(self, result: SyncResult) -> None:
+        result.finished_at = result.finished_at or datetime.now(timezone.utc)
+        # A provider usage limit (429 / quota) pauses this source: persist a distinct
+        # status so future syncs skip it, and it stays paused across restarts.
+        if result.status == "error" and _looks_rate_limited(result.error):
+            result.status = RATE_LIMIT_STATUS
+            log.warning("Source %s/%s hit a provider limit — pausing future syncs (persisted).",
+                        result.source, result.category)
+        self._record_run(result)
         self._repo.upsert_sync_state(
             data_source=result.source,
             category=result.category,
@@ -247,11 +288,16 @@ class SyncService:
         return [c.status() for c in self._connectors.values()]
 
     def status(self) -> dict:
+        states = self._repo.sync_states()
         return {
             "connectors": {c.source.value: c.status().label for c in self._connectors.values()},
             "counts": self._repo.counts(),
             "last_supply_refresh": self._repo.last_supply_refresh(),
             "last_demand_refresh": self._repo.last_demand_refresh(),
-            "coverage": self._repo.sync_states(),
+            "coverage": states,
+            # Sources paused after a provider rate/quota limit (persisted).
+            "paused_sources": sorted(
+                {s["data_source"] for s in states if s["sync_status"] == RATE_LIMIT_STATUS}
+            ),
             "recent_runs": self._repo.last_sync_runs(limit=5),
         }

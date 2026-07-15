@@ -76,6 +76,11 @@ class BaseConnector:
     min_interval_s: float = 0.25
     timeout_s: float = 15.0
     max_attempts: int = 3
+    #: Consecutive failed requests before the per-connector circuit opens and every
+    #: further request fails fast — no network call and no repeated error log. This
+    #: stops error storms even when the caller swallows individual failures. 0
+    #: disables the breaker (default), so connectors opt in explicitly.
+    circuit_breaker_threshold: int = 0
 
     def __init__(self, settings: Settings | None = None, session: requests.Session | None = None) -> None:
         self._settings = settings or get_settings()
@@ -84,6 +89,16 @@ class BaseConnector:
         self._last_request_ts = 0.0
         self._last_error: str | None = None
         self._last_checked: datetime | None = None
+        self._consecutive_failures = 0
+        self._circuit_open = False
+
+    def reset_circuit(self) -> None:
+        """Close the circuit and clear the failure streak (call before a fresh run)."""
+        self._consecutive_failures = 0
+        self._circuit_open = False
+
+    def is_circuit_open(self) -> bool:
+        return self._circuit_open
 
     # ------------------------------------------------------------------ #
     # Auth (override in subclasses that need it)
@@ -109,6 +124,10 @@ class BaseConnector:
 
     def _get(self, path: str, params: dict[str, Any] | None = None) -> Any:
         """GET with rate limiting, retry/backoff, and typed error mapping."""
+        if self._circuit_open:
+            # Fail fast: the breaker already reported the outage when it opened, so
+            # skip the network and stay quiet to avoid an error-log storm.
+            raise ConnectorError(f"{self.source.value}: circuit open (skipping after repeated failures)")
         if not self.is_configured():
             raise AuthError(f"{self.source.value}: connector is not configured (missing credentials)")
 
@@ -149,10 +168,22 @@ class BaseConnector:
         try:
             data = _do()
             self._last_error = None
+            self._consecutive_failures = 0  # a clean call closes any streak
             return data
         except ConnectorError as exc:
             self._last_error = str(exc)
-            self._log.error("Connector %s failed: %s", self.source.value, exc)
+            self._consecutive_failures += 1
+            if self.circuit_breaker_threshold and self._consecutive_failures >= self.circuit_breaker_threshold:
+                if not self._circuit_open:
+                    self._circuit_open = True
+                    self._log.error(
+                        "Connector %s failing repeatedly — opening circuit after %d failures; "
+                        "further requests are skipped until reset.",
+                        self.source.value, self._consecutive_failures,
+                    )
+                # Circuit just opened (or already open): suppress the per-request log.
+            else:
+                self._log.error("Connector %s failed: %s", self.source.value, exc)
             raise
 
     # ------------------------------------------------------------------ #

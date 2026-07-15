@@ -27,14 +27,31 @@ from ingestion.demand.records import RawSignal, RouteContext, WeeklyDemand
 from ingestion.normalization.demand_normalizer import build_signal_scores
 from shared.config import Settings, get_settings
 from shared.logging_config import get_logger
+from shared.rate_limit import RATE_LIMIT_STATUS, looks_rate_limited
 from shared.utils import haversine_km
 
 log = get_logger("backend.demand_service")
+
+# SyncState category under which per-demand-connector rate-limit pauses are
+# persisted (kept separate from the aggregate "demand" run state so pausing one
+# signal source never blocks the others).
+_DEMAND_SIGNAL_CATEGORY = "demand_signal"
+
+# Consecutive failures of a single demand connector before it is skipped for the
+# rest of the current run (protects against non-rate-limit error storms, e.g. a
+# systematic HTTP 404). In-run only — not persisted, so it is retried next run.
+_DEMAND_FAILURE_LIMIT = 3
 
 
 def current_iso_week() -> str:
     iso = datetime.now(timezone.utc).isocalendar()
     return f"{iso.year}-W{iso.week:02d}"
+
+
+def _source_key(connector) -> str:
+    """Stable data-source identifier for a demand connector (falls back to type)."""
+    source = getattr(connector, "source", None)
+    return getattr(source, "value", None) or getattr(connector, "signal_type", "unknown")
 
 
 @dataclass
@@ -142,16 +159,59 @@ class DemandService:
         result = DemandSyncResult(week=week, status="running")
         try:
             contexts = route_contexts if route_contexts is not None else self._market_route_contexts()
+            # Per-connector circuit breaker (stops hammering a broken source):
+            #  * connectors paused by an earlier failure are skipped from the start —
+            #    the pause is persisted in sync_state and survives restarts (see
+            #    _paused_demand_sources / _pause_demand_source), i.e. it is the
+            #    default again at the next start until resumed from Diagnostics;
+            #  * a provider limit (429/quota) pauses the source immediately;
+            #  * ANY other error (e.g. repeated HTTP 404) that recurs
+            #    ``_DEMAND_FAILURE_LIMIT`` times — whether raised by fetch() or
+            #    swallowed internally and surfaced via the connector's circuit — also
+            #    pauses the source persistently. All demand failures thus converge on
+            #    the same paused ("rate limited") state.
+            disabled = self._paused_demand_sources()
+            # Arm each connector's request-level circuit breaker for this run, so a
+            # source that fails internally (e.g. fetch() swallows a 404 per city and
+            # returns []) still stops hitting the network after a few failures.
+            for conn in self._connectors:
+                reset = getattr(conn, "reset_circuit", None)
+                if reset is not None:
+                    reset()
+                    conn.circuit_breaker_threshold = _DEMAND_FAILURE_LIMIT
+            fail_streak: dict[str, int] = {}
             signals: list[RawSignal] = []
             for ctx in contexts:
                 for conn in self._connectors:
-                    if not conn.available():
+                    src = _source_key(conn)
+                    if src in disabled or not conn.available():
                         continue
                     try:
                         signals.extend(conn.fetch(ctx, week))
+                        fail_streak[src] = 0  # a clean call resets the streak
+                        # fetch() may swallow internal request failures and just
+                        # return []; if enough of those tripped the connector's
+                        # circuit, treat the source as down and pause it persistently.
+                        if getattr(conn, "is_circuit_open", lambda: False)():
+                            self._pause_demand_source(src)
+                            disabled.add(src)
+                            log.warning("Demand source %s failing repeatedly — paused (persisted; "
+                                        "survives restart, resume from Diagnostics).", src)
                     except ConnectorError as exc:
+                        if looks_rate_limited(str(exc)):
+                            self._pause_demand_source(src)
+                            disabled.add(src)
+                            log.warning("Demand source %s hit a provider limit — paused (persisted).", src)
+                            continue
+                        fail_streak[src] = fail_streak.get(src, 0) + 1
                         log.warning("Demand connector %s failed for %s-%s: %s",
-                                    getattr(conn, "signal_type", "?"), ctx.origin_iata, ctx.dest_iata, exc)
+                                    getattr(conn, "signal_type", "?"), ctx.origin_iata,
+                                    ctx.dest_iata, exc)
+                        if fail_streak[src] >= _DEMAND_FAILURE_LIMIT:
+                            self._pause_demand_source(src)
+                            disabled.add(src)
+                            log.warning("Demand source %s failed %d times in a row — paused "
+                                        "(persisted; survives restart).", src, fail_streak[src])
             result.signals = len(signals)
             result.normalized = self.compute_from_signals(signals, week=week)
             result.status = "success" if signals else "skipped"
@@ -164,6 +224,27 @@ class DemandService:
         finally:
             result.finished_at = datetime.now(timezone.utc)
         return result
+
+    # ------------------------------------------------------------------ #
+    # Per-connector rate-limit circuit breaker (persisted in SyncState)
+    # ------------------------------------------------------------------ #
+    def _paused_demand_sources(self) -> set[str]:
+        """Demand sources paused by an earlier provider limit (persisted state)."""
+        return {
+            s["data_source"]
+            for s in self._obs.sync_states()
+            if s["category"] == _DEMAND_SIGNAL_CATEGORY and s["sync_status"] == RATE_LIMIT_STATUS
+        }
+
+    def _pause_demand_source(self, source: str) -> None:
+        """Persist a demand source as paused so future syncs skip it (until resumed)."""
+        self._obs.upsert_sync_state(
+            data_source=source,
+            category=_DEMAND_SIGNAL_CATEGORY,
+            coverage_scope="Global",
+            sync_status=RATE_LIMIT_STATUS,
+            records=0,
+        )
 
     def _market_route_contexts(self) -> list[RouteContext]:
         """O-D pairs generated **independently of supply**, from the AIRPORTS catalog.
@@ -198,4 +279,8 @@ class DemandService:
         s = self._demand.status()
         s["sources"] = {getattr(c, "signal_type", "?"): ("available" if c.available() else "unavailable")
                         for c in self._connectors}
+        # Availability keyed by data-source value (e.g. "wikipedia"), so the
+        # diagnostics panel can surface demand connectors as External Data Sources.
+        s["source_states"] = {_source_key(c): ("available" if c.available() else "unavailable")
+                              for c in self._connectors}
         return s

@@ -187,6 +187,19 @@ class SqlAlchemyObservationRepository:
                 return state
         return None
 
+    def clear_sync_status(self, status: str, new_status: str = "idle") -> int:
+        """Flip every SyncState currently in ``status`` to ``new_status``.
+
+        Used to *resume* sources paused after a provider rate/quota limit — the
+        paused state is persisted (survives restarts), so this is the only way back.
+        Returns the number of sources changed.
+        """
+        with session_scope() as s:
+            rows = s.execute(select(SyncState).where(SyncState.sync_status == status)).scalars().all()
+            for r in rows:
+                r.sync_status = new_status
+            return len(rows)
+
     # -- status / counts ----------------------------------------------- #
     def counts(self) -> dict:
         with session_scope() as s:

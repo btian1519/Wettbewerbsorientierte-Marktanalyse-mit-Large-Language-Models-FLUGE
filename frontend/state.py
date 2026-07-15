@@ -148,17 +148,18 @@ def sync_network_availability() -> None:
     ss["sl_net"] = default
 
 
-def filter_slider(label: str, key: str, on_change=None) -> None:
+def filter_slider(label: str, key: str, on_change=None, help: str | None = None) -> None:
     """Render a 0–100% filter slider that shows its default on first render.
 
     ``value=`` is supplied only until the key exists in ``session_state``;
     thereafter the widget (and Undo/Clear, which set ``session_state[key]`` before
     the widget) drive it. This works around Streamlit ignoring an externally
     pre-set value on a widget's first instantiation. ``on_change`` lets the caller
-    hook user edits (e.g. Network Availability customization tracking).
+    hook user edits (e.g. Network Availability customization tracking); ``help``
+    renders Streamlit's built-in ``?`` tooltip next to the label.
     """
     kwargs = {} if key in st.session_state else {"value": _slider_default(key)}
-    st.slider(label, 0, 100, key=key, format="%d%%", on_change=on_change, **kwargs)
+    st.slider(label, 0, 100, key=key, format="%d%%", on_change=on_change, help=help, **kwargs)
 
 
 def current_filter_settings() -> FilterSettings:

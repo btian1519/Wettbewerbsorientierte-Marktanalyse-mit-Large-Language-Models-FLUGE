@@ -13,6 +13,7 @@ import streamlit as st
 from backend.container import Container
 from frontend.components import airline_dropdown, scope_dropdown, task_dropdown
 from frontend.sidebar.dev_footer import render_dev_footer
+from frontend.sidebar.diagnostics import refresh_snapshot, summarize_sync_result
 from frontend.state import (
     build_request,
     can_undo,
@@ -27,6 +28,19 @@ from shared.constants import TOP_VISIBLE_RESULTS
 from shared.logging_config import get_logger
 
 log = get_logger("frontend.sidebar")
+
+# Business-friendly tooltip for the Network Availability slider (shown via the
+# built-in "?" icon). Deliberately non-technical — no variable names, no maths.
+_NET_AVAILABILITY_HELP = (
+    "Network Availability reflects how easily existing airline infrastructure and "
+    "hubs can support the selected market.\n\n"
+    "**100%:** Existing infrastructure and hubs are fully available on the selected "
+    "continent. No additional CAPEX is required for new capacity opportunities.\n\n"
+    "**0%:** Existing infrastructure and hubs are not available. Additional "
+    "investment may be required.\n\n"
+    'For "Identify overcapacities", the interpretation is inverted and reflects '
+    "potential divestiture flexibility."
+)
 
 
 def render_sidebar(container: Container) -> None:
@@ -79,11 +93,23 @@ def _render_filters() -> None:
         # be re-enabled by restoring the slider here.
         filter_slider("Average Margin", "sl_margin")
         # on_change flags a deliberate user value so it survives Task changes /
-        # Refresh (see state.sync_network_availability).
-        filter_slider("Network Availability", "sl_net", on_change=mark_net_customized)
+        # Refresh (see state.sync_network_availability). ``help`` adds the built-in
+        # "?" tooltip next to the label — presentation only, no logic change.
+        filter_slider(
+            "Network Availability", "sl_net",
+            on_change=mark_net_customized, help=_NET_AVAILABILITY_HELP,
+        )
 
 
 def _refresh(container: Container) -> None:
+    # Optional data sync before recompute (Diagnostics: "Automatically sync data
+    # before Refresh"). Off by default → Refresh only recomputes the analysis.
+    if st.session_state.get("sync_on_refresh"):
+        with st.spinner("Syncing market data before refresh…"):
+            results = container.sync_service.sync_market()
+        st.session_state["last_sync_results"] = [summarize_sync_result(r) for r in results]
+        refresh_snapshot()  # invalidate the cached diagnostics snapshot
+
     request = build_request()
     analysis = container.analysis_for(st.session_state.get("data_source", "demo"))
     with st.spinner("Recomputing..."):

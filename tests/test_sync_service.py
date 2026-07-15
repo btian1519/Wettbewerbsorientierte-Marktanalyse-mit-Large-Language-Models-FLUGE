@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from backend.services.catalog_service import CatalogService
 from database.repository.observation_repo import SqlAlchemyObservationRepository
 from ingestion.connectors import AircraftDbConnector, AirLabsConnector, GoogleTrendsConnector
@@ -9,6 +11,16 @@ from ingestion.sync_service import SyncService
 from shared.config import Settings
 from shared.sources import DataSource
 from tests.test_connectors import _Resp, _Session
+
+
+@pytest.fixture(autouse=True)
+def _clear_pauses(seeded_repos):
+    """The seeded DB is session-scoped: a source paused by a rate/quota limit is
+    persisted, so clear it around each test to keep supply syncs isolated."""
+    repo = SqlAlchemyObservationRepository()
+    repo.clear_sync_status("rate_limited")
+    yield
+    repo.clear_sync_status("rate_limited")
 
 
 def _service(monkeypatch, catalog_repo) -> tuple[SyncService, _Session, SqlAlchemyObservationRepository]:
@@ -79,7 +91,9 @@ def test_quota_error_aborts_on_first_request(seeded_repos, monkeypatch):
     )
 
     result = svc.sync_supply()
-    assert result.status == "error"
+    # A provider usage limit now pauses the source (persisted), rather than a
+    # generic error, so future syncs skip it instead of hammering the quota.
+    assert result.status == "rate_limited"
     assert "monthly request limit" in result.error
     # Aborted on the first airport — did not burn the circuit-breaker's 5 requests.
     dep_calls = [p for _u, p in session.calls if p.get("dep_iata")]
