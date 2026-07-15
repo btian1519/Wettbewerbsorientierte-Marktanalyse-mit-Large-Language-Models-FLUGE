@@ -64,14 +64,19 @@ def render_sidebar(container: Container) -> None:
 
 def _render_filters() -> None:
     with st.expander("Additional Filters", expanded=False):
-        # Keyed sliders: their values live in session_state (sl_margin/net/dist)
-        # and are read back by state.current_filter_settings(). Streamlit ignores
-        # an externally pre-set session_state value on a widget's *first* render,
-        # so filter_slider() passes value= only until the key is established.
-        filter_slider("Average Margin — Marge_average", "sl_margin")
-        filter_slider("Network Availability — Network_availability", "sl_net")
-        filter_slider("Distance Efficiency — distance_efficiency (min)", "sl_dist")
-        st.caption("Further filter variables can be plugged in here (placeholder).")
+        # Keyed sliders: their values live in session_state (sl_margin/net) and are
+        # read back by state.current_filter_settings(). Streamlit ignores an
+        # externally pre-set session_state value on a widget's *first* render, so
+        # filter_slider() passes value= only until the key is established.
+        #
+        # Only user-friendly labels are shown; internal variable names are hidden.
+        # The Distance Efficiency slider is intentionally not rendered (not yet
+        # functional). Its value is still consumed by current_filter_settings(),
+        # which falls back to the DEFAULT_MIN_DISTANCE_EFFICIENCY default when the
+        # widget is absent, so the calculation logic is unchanged and the filter can
+        # be re-enabled by restoring the slider here.
+        filter_slider("Average Margin", "sl_margin")
+        filter_slider("Network Availability", "sl_net")
 
 
 def _refresh(container: Container) -> None:
