@@ -16,11 +16,12 @@ from frontend.sidebar.dev_footer import render_dev_footer
 from frontend.state import (
     build_request,
     can_undo,
+    commit_analysis_snapshot,
     filter_slider,
     inputs_complete,
+    mark_net_customized,
     request_clear_filters,
     request_undo,
-    save_input_snapshot,
 )
 from shared.constants import TOP_VISIBLE_RESULTS
 from shared.logging_config import get_logger
@@ -42,8 +43,9 @@ def render_sidebar(container: Container) -> None:
 
         # --- Actions ---------------------------------------------------
         cundo, cclear = st.columns(2)
-        # Undo restores ALL inputs to the last computed snapshot; disabled
-        # (greyed out) until at least one Refresh has been performed. The actual
+        # Undo restores the entire previously computed analysis (inputs *and*
+        # results/map/show-more) from `previous_snapshot`; disabled (greyed out)
+        # until at least one Refresh has produced a previous analysis. The actual
         # restore runs at the top of the next rerun (before widgets exist).
         if cundo.button("Undo Changes", use_container_width=True, disabled=not can_undo()):
             request_undo()
@@ -53,7 +55,7 @@ def render_sidebar(container: Container) -> None:
             st.rerun()
 
         if st.button(
-            "REFRESH", type="primary", use_container_width=True, disabled=not inputs_complete()
+            "REFRESH!", type="primary", use_container_width=True, disabled=not inputs_complete()
         ):
             _refresh(container)
 
@@ -76,7 +78,9 @@ def _render_filters() -> None:
         # widget is absent, so the calculation logic is unchanged and the filter can
         # be re-enabled by restoring the slider here.
         filter_slider("Average Margin", "sl_margin")
-        filter_slider("Network Availability", "sl_net")
+        # on_change flags a deliberate user value so it survives Task changes /
+        # Refresh (see state.sync_network_availability).
+        filter_slider("Network Availability", "sl_net", on_change=mark_net_customized)
 
 
 def _refresh(container: Container) -> None:
@@ -85,6 +89,7 @@ def _refresh(container: Container) -> None:
     with st.spinner("Recomputing..."):
         st.session_state.response = analysis.analyze(request)
     st.session_state.visible = TOP_VISIBLE_RESULTS
-    # Successful Refresh: snapshot all inputs and enable Undo.
-    save_input_snapshot(mark_refreshed=True)
+    # Successful Refresh: keep the analysis being replaced as `previous` and record
+    # the new one as `current`, enabling a single-level Undo.
+    commit_analysis_snapshot(is_refresh=True)
     st.rerun()

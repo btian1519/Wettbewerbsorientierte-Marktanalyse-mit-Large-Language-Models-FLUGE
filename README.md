@@ -34,10 +34,17 @@ Run the tests with `python -m pytest`.
 
    ```
    delta        = demand − total_supply
+   x            = Network Availability slider / 100            (0..1)
+   net_factor F = 0.5 · (1 + sign(delta) · (2·x − 1))
    distance_eff = clamp(1 − |distance − 2000| / 10000, 0, 1)
-   marge_proxy  = 0.5 · network_availability + 0.5 · distance_eff
+   marge_proxy  = 0.5 · net_factor + 0.5 · distance_eff
    benefit(EUR) = delta · marge_proxy · marge_average · price_eur
    ```
+
+   `net_factor` (F) makes the same slider act mirror-symmetrically on market gaps
+   (delta > 0) and overcapacities (delta < 0); at delta = 0 it is a neutral 0.5.
+   The slider therefore defaults to 100 % for opportunities and 0 % for
+   overcapacities, both giving the neutral baseline F = 1.0.
 
    * **Opportunities** — all routes in scope, **maximise** benefit (biggest
      untapped market gaps first).

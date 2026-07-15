@@ -1,6 +1,13 @@
 from __future__ import annotations
 
-from backend.analysis.engine import BenefitEngine, distance_efficiency, marge_proxy
+import pytest
+
+from backend.analysis.engine import (
+    BenefitEngine,
+    distance_efficiency,
+    marge_proxy,
+    network_availability_factor,
+)
 from backend.dto import FilterSettings
 from shared.constants import Task
 from tests.factories import offer, route
@@ -18,6 +25,22 @@ def test_marge_proxy():
     assert marge_proxy(1.0, 2000) == 1.0
     # network=0, distance=2000 -> 0.5*0 + 0.5*1 = 0.5
     assert marge_proxy(0.0, 2000) == 0.5
+
+
+@pytest.mark.parametrize(
+    "delta, slider, expected",
+    [
+        (100.0, 1.0, 1.0),    # Z > 0, slider 100% -> F = 1.0
+        (100.0, 0.0, 0.0),    # Z > 0, slider   0% -> F = 0.0
+        (-100.0, 1.0, 0.0),   # Z < 0, slider 100% -> F = 0.0
+        (-100.0, 0.0, 1.0),   # Z < 0, slider   0% -> F = 1.0
+        (0.0, 1.0, 0.5),      # Z = 0 -> neutral 0.5 regardless of slider
+        (0.0, 0.0, 0.5),
+        (0.0, 0.37, 0.5),
+    ],
+)
+def test_network_availability_factor(delta, slider, expected):
+    assert network_availability_factor(slider, delta) == pytest.approx(expected)
 
 
 def test_opportunity_uses_full_delta():
@@ -43,6 +66,10 @@ def test_overcapacity_applies_airline_share():
     assert abs(sr.airline_share - share) < 1e-9
     # delta and benefit scaled by LH's share
     assert abs(sr.delta_pax - (-2000 * share)) < 1e-6
-    proxy = marge_proxy(1.0, 2000.0)
+    # Network Availability is now direction-dependent: for an overcapacity (Z<0)
+    # a full slider (x=1.0) collapses the factor to F=0.0.
+    net_factor = network_availability_factor(1.0, -2000)
+    assert net_factor == 0.0
+    proxy = marge_proxy(net_factor, 2000.0)
     expected_benefit = (-2000) * proxy * 0.2 * 150 * share
     assert abs(sr.benefit_eur - expected_benefit) < 1e-6

@@ -40,9 +40,9 @@ _CSS = f"""
 }}
 .stButton > button[kind="secondary"]:hover {{ filter: brightness(1.1); color: white; }}
 .stButton > button[kind="primary"] {{
-    background: {C['green']}; color: {C['green_text']}; box-shadow: 0 2px 6px rgba(0,0,0,.15);
+    background: {C['primary_green']}; color: {C['green_text']}; box-shadow: 0 2px 6px rgba(0,0,0,.15);
 }}
-.stButton > button[kind="primary"]:hover {{ filter: brightness(1.03); color: {C['green_text']}; }}
+.stButton > button[kind="primary"]:hover {{ background: {C['primary_green_hover']}; color: {C['green_text']}; }}
 
 /* ---- Dropdowns (identical on start page & sidebar) ----------------- */
 div[data-baseweb="select"] > div {{

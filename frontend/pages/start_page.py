@@ -6,7 +6,7 @@ import streamlit as st
 
 from backend.container import Container
 from frontend.components import airline_dropdown, scope_dropdown, task_dropdown
-from frontend.state import build_request, go_to, inputs_complete, save_input_snapshot
+from frontend.state import build_request, commit_analysis_snapshot, go_to, inputs_complete
 from shared.constants import TOP_VISIBLE_RESULTS
 from shared.logging_config import get_logger
 
@@ -30,7 +30,7 @@ def render_start_page(container: Container) -> None:
     st.write("")
     _, mid, _ = st.columns([1, 1, 1])
     with mid:
-        if st.button("Analyze!", type="primary", use_container_width=True, disabled=not inputs_complete()):
+        if st.button("ANALYZE!", type="primary", use_container_width=True, disabled=not inputs_complete()):
             _run_and_go(container)
 
     st.markdown(
@@ -45,7 +45,8 @@ def _run_and_go(container: Container) -> None:
     with st.spinner("Analyzing routes..."):
         st.session_state.response = analysis.analyze(request)
     st.session_state.visible = TOP_VISIBLE_RESULTS
-    # Initial computation: snapshot inputs but keep Undo disabled until first Refresh.
-    save_input_snapshot(mark_refreshed=False)
+    # Initial computation: current snapshot = this analysis, no previous yet
+    # (Undo stays disabled until the first Refresh).
+    commit_analysis_snapshot(is_refresh=False)
     go_to("results")
     st.rerun()

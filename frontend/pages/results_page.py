@@ -2,7 +2,7 @@
 
 Without any detail expander opened the main area is designed to fit on a single
 screen; the map shows the currently visible results and grows as 'Show more'
-reveals additional routes.
+reveals additional routes, collapsing again with 'Show less'.
 """
 
 from __future__ import annotations
@@ -49,17 +49,25 @@ def render_results_page(container: Container, map_renderer: MapRenderer) -> None
         render_result_card(r, response.task.value)
         st.write("")
 
-    # --- Show more / Export --------------------------------------------
+    # --- Show more / less / Export -------------------------------------
     c1, c2, _ = st.columns([1.2, 1.2, 3])
     with c1:
-        # Disabled when fewer than SHOW_MORE_MIN_RESULTS (4) results qualify, or
-        # when everything is already shown.
-        can_show_more = (
-            len(response.results) >= SHOW_MORE_MIN_RESULTS
-            and visible < min(TOP_N_RESULTS, len(response.results))
-        )
-        if st.button("Show more", use_container_width=True, disabled=not can_show_more):
-            st.session_state.visible = min(TOP_N_RESULTS, len(response.results))
+        # Single toggle driven solely by `visible` (the existing display state):
+        #   collapsed (top 3)  -> "Show more"  -> expand to top-N
+        #   expanded (top N)   -> "Show less"  -> collapse back to top 3
+        # Only the display changes; no new results are computed or loaded, and the
+        # map stays in sync because it renders response.results[:visible].
+        expanded_visible = min(TOP_N_RESULTS, len(response.results))
+        has_extra = len(response.results) >= SHOW_MORE_MIN_RESULTS
+        extended = visible > TOP_VISIBLE_RESULTS
+        # Disabled only when fewer than SHOW_MORE_MIN_RESULTS (4) results qualify,
+        # i.e. there is nothing beyond the top 3 to reveal.
+        if st.button(
+            "Show less" if extended else "Show more",
+            use_container_width=True,
+            disabled=not has_extra,
+        ):
+            st.session_state.visible = TOP_VISIBLE_RESULTS if extended else expanded_visible
             st.rerun()
     with c2:
         airline = container.catalog_service.airline(response.airline_iata)

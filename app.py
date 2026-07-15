@@ -18,7 +18,7 @@ from backend.container import Container, build_container
 from frontend.maps import CanvasMapRenderer, MapRenderer
 from frontend.pages import render_results_page, render_start_page
 from frontend.sidebar import render_sidebar
-from frontend.state import apply_pending_action, init_state
+from frontend.state import apply_pending_action, init_state, sync_network_availability
 from frontend.styles import inject_css
 
 
@@ -39,6 +39,7 @@ def main() -> None:
     inject_css()
     init_state()
     apply_pending_action()  # apply queued Undo/Clear before any widget renders
+    sync_network_availability()  # re-assert mode default unless user-customized
     container, map_renderer = _bootstrap()
 
     if st.session_state.page == "start":

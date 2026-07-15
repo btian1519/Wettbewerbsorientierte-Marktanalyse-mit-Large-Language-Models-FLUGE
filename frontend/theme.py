@@ -7,6 +7,14 @@ one-file change.
 
 from __future__ import annotations
 
+# Highlight orange — single source of truth for the highlighted airport markers.
+PRIMARY_ORANGE = "#f2a71b"
+# Shared primary green — single source of truth for the animated plane icons AND
+# the primary action buttons (Analyze! / Refresh / Sync Now), so they read as one
+# family. Bright, modern emerald with a slightly darker companion for hover.
+PRIMARY_GREEN = "#2ecc71"
+PRIMARY_GREEN_HOVER = "#27ae60"
+
 COLORS: dict[str, str] = {
     "teal": "#1a6d8e",
     "teal_dark": "#134e66",
@@ -16,6 +24,9 @@ COLORS: dict[str, str] = {
     "green": "#aee3a1",
     "green_dark": "#8ed67f",
     "green_text": "#2f6f2a",
+    # Shared primary green (plane icons + primary action buttons) and its hover.
+    "primary_green": PRIMARY_GREEN,
+    "primary_green_hover": PRIMARY_GREEN_HOVER,
     "grey_sidebar": "#d9d9d9",
     "grey_panel": "#eef0f1",
     "white": "#ffffff",
@@ -25,9 +36,9 @@ COLORS: dict[str, str] = {
     "land": "#cbd8df",
     "land_active": "#9cc3d4",
     "route": "#123f56",
-    "plane": "#8ed67f",
+    "plane": PRIMARY_GREEN,
     "airport_dot": "#9aa7ad",
-    "airport_hl": "#f2a71b",
+    "airport_hl": PRIMARY_ORANGE,
 }
 
 RADIUS = "26px"

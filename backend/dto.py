@@ -24,10 +24,13 @@ from shared.constants import (
 class FilterSettings(BaseModel):
     """Tunable analysis parameters exposed as the sidebar 'Additional Filters'.
 
-    ``marge_average`` and ``network_availability`` feed the benefit formula
-    directly; ``min_distance_efficiency`` is a threshold that drops routes whose
-    computed distance efficiency is below it. ``extra`` reserves room for future
-    filter variables without a schema change.
+    ``marge_average`` feeds the benefit formula directly. ``network_availability``
+    holds the slider fraction ``x`` (0..1); the engine converts it into the
+    direction-dependent factor ``F`` per route (see
+    :func:`backend.analysis.engine.network_availability_factor`).
+    ``min_distance_efficiency`` is a threshold that drops routes whose computed
+    distance efficiency is below it. ``extra`` reserves room for future filter
+    variables without a schema change.
     """
 
     marge_average: float = Field(DEFAULT_MARGE_AVERAGE, ge=0.0, le=1.0)

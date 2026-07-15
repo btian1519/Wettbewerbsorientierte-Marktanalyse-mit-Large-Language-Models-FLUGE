@@ -150,7 +150,7 @@ def _render_sync_controls(container: Container) -> None:
         "Updates the entire market (all airports / routes / airlines). Independent "
         "of the selected airline, continent, task or filters."
     )
-    if st.button("Sync Now", use_container_width=True, type="primary"):
+    if st.button("SYNC NOW!", use_container_width=True, type="primary"):
         with st.spinner("Syncing global market data…"):
             results = container.sync_service.sync_market()
         for r in results:
