@@ -79,27 +79,34 @@ def _first_line(text: str | None) -> str | None:
 def _classify(configured_label: str, last_run: dict | None, paused: bool = False) -> tuple[str, str, str | None]:
     """Map a source to ``(emoji, headline, limitation)`` for the sources panel.
 
-    Provider-side limits are amber ("API integrated" + reason) so they never read
-    as "not implemented"; only auth/technical failures are red. A ``paused`` source
-    (auto-stopped after a rate/quota limit) is shown as rate limited.
+    Every source — including a persisted pause — runs through this single function:
+    provider-side limits are amber ("API integrated" + a business-friendly reason)
+    so they never read as "not implemented", and only auth failures are red. There
+    is deliberately **no per-source special case**: a paused source is presented in
+    exactly the same amber form as any other rate/quota limitation, so Wikipedia,
+    AirLabs and Google Trends are indistinguishable to a viewer. Raw HTTP codes,
+    "failed", "Rate limited" or "Paused" wording never appear here.
     """
-    if paused:
-        return ("🟡", "Rate limited", "Sync paused — provider limit (persists until resumed)")
     err = (last_run or {}).get("error") or ""
     status = (last_run or {}).get("status")
     e = err.lower()
+    # Red — the only hard state: credentials rejected.
     if any(k in e for k in ("401", "403", "unauthorized", "forbidden", "auth")):
         return ("🔴", "Attention required", _first_line(err))
-    if "429" in e or "rate limit" in e:
-        return ("🟡", "API integrated", "Rate limit reached")
+    # Amber — integration active, provider temporarily limiting us. The specific
+    # reason is taken from the last run when known; a pause with no run-level detail
+    # (e.g. Wikipedia, whose limit is tracked in sync_state) falls back to a generic
+    # provider-limit phrasing. All three yield the same "API integrated" headline.
     if "quota" in e:
         return ("🟡", "API integrated", "Request quota exceeded")
+    if "429" in e or "rate limit" in e:
+        return ("🟡", "API integrated", "Rate limit reached")
+    if paused:
+        return ("🟡", "API integrated", "Provider rate limit")
     if configured_label == "not configured" or "not configured" in e or "api key" in e or "credential" in e:
         return ("🟡", "API integrated", "Awaiting provider credentials")
     if status == "error" and err:
         return ("🟡", "API integrated", "Temporary provider limitation")
-    if status == "success":
-        return ("🟢", "Available", None)
     return ("🟢", "Available", None)
 
 

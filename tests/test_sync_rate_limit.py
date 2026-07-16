@@ -3,6 +3,7 @@ the pause persists (survives restarts via SyncState) and is shown as such."""
 
 from __future__ import annotations
 
+import logging
 from types import SimpleNamespace
 
 import pytest
@@ -97,11 +98,27 @@ def test_status_lists_paused_sources(seeded_repos):
 # Display reflects the paused state.
 # --------------------------------------------------------------------------- #
 def test_display_shows_rate_limited():
+    # A paused source (no run-level detail) renders in the uniform amber form,
+    # never the old "Rate limited"/"Paused" wording.
     snap = {"sync": {"connectors": {"airlabs": "unknown"}, "recent_runs": [],
                      "paused_sources": ["airlabs"]}}
     card = dg.source_statuses(snap)[0]
     assert card["emoji"] == "🟡"
-    assert card["headline"] == "Rate limited"
+    assert card["headline"] == "API integrated"
+    assert card["detail"] == "Provider rate limit"
+
+
+def test_display_paused_source_with_429_run_shows_rate_limit_reached():
+    # When the last run carries the reason, the specific limitation is shown —
+    # identical wording to a live rate limit, still "API integrated".
+    snap = {"sync": {"connectors": {"airlabs": "unknown"},
+                     "recent_runs": [{"source": "airlabs", "status": "rate_limited",
+                                      "error": "airlabs: HTTP 429"}],
+                     "paused_sources": ["airlabs"]}}
+    card = dg.source_statuses(snap)[0]
+    assert card["emoji"] == "🟡"
+    assert card["headline"] == "API integrated"
+    assert card["detail"] == "Rate limit reached"
 
 
 def test_wikipedia_featured_as_external_source():
@@ -122,8 +139,15 @@ def test_wikipedia_shows_paused_when_rate_limited():
         "demand": {"source_states": {"wikipedia": "available"}},
     }
     cards = {c["name"]: c for c in dg.source_statuses(snap)}
-    assert cards["Wikipedia"]["emoji"] == "🟡"
-    assert cards["Wikipedia"]["headline"] == "Rate limited"
+    wiki = cards["Wikipedia"]
+    # Wikipedia looks exactly like any other integrated provider under a limit.
+    assert wiki["emoji"] == "🟡"
+    assert wiki["headline"] == "API integrated"
+    assert wiki["detail"] == "Provider rate limit"
+    # No Wikipedia-specific / technical wording may leak into the investor view.
+    blob = (wiki["headline"] + " " + (wiki["detail"] or "")).lower()
+    for forbidden in ("rate limited", "paused", "failed", "http", "error", "not implemented", "json"):
+        assert forbidden not in blob
 
 
 def test_summarize_rate_limited_result():
@@ -210,16 +234,16 @@ class _Failing404:
         raise ConnectorError('wikipedia: HTTP 404 — no data for those dates')
 
 
-def test_demand_connector_stops_after_repeated_failures(seeded_repos):
-    from backend.services.demand_service import _DEMAND_FAILURE_LIMIT
-
+def test_demand_connector_pauses_on_first_error(seeded_repos):
+    # Any error (here a systematic 404, deliberately NOT a real rate limit) flips the
+    # source to the provider-limited state on the FIRST strike — no per-O-D hammering.
     catalog_repo, _ = seeded_repos
     conn = _Failing404()
     svc = _demand_service(catalog_repo, conn)
 
     svc.sync(route_contexts=_contexts(20))
-    # Stops after N consecutive failures instead of firing once per O-D pair.
-    assert conn.calls == _DEMAND_FAILURE_LIMIT
+    # Called exactly once despite 20 routes.
+    assert conn.calls == 1
     # ...and the pause is persisted (survives restart, default paused next start).
     state = SqlAlchemyObservationRepository().coverage_for("wikipedia", "demand_signal")
     assert state is not None and state["sync_status"] == "rate_limited"
@@ -255,20 +279,108 @@ def test_connector_circuit_opens_and_stops_calling_network():
     assert not c.is_circuit_open()
 
 
-def test_demand_swallowing_connector_stops_hammering(seeded_repos):
-    from backend.services.demand_service import _DEMAND_FAILURE_LIMIT
-
+def test_demand_wikipedia_429_pauses_immediately(seeded_repos):
+    """A real HTTP 429 from Wikipedia's own _get must NOT be swallowed by fetch();
+    it propagates into the unified pause path and stops the source at once —
+    exactly like AirLabs, instead of being re-hammered once per O-D pair."""
     catalog_repo, _ = seeded_repos
-    session = _Session(_Resp(404, {"detail": "no data for those dates"}))
-    conn = WikipediaDemandConnector(Settings(), session=session)  # fetch() swallows 404s -> []
+    session = _Session(_Resp(429, {"detail": "rate limited"}))
+    conn = WikipediaDemandConnector(Settings(), session=session)
     svc = _demand_service(catalog_repo, conn)
 
     ctxs = [RouteContext(origin_iata=f"O{i:02d}", dest_iata=f"D{i:02d}",
                          origin_city=f"City{i}", dest_city=f"Dest{i}") for i in range(20)]
     svc.sync(route_contexts=ctxs)
-    # Despite 20 routes, the network was hit only until the breaker opened...
-    assert len(session.calls) == _DEMAND_FAILURE_LIMIT
-    # ...and the source is paused persistently (shown as "Rate limited", survives
-    # restart) even though fetch() swallowed each individual 404.
+
+    # Paused immediately + persisted (survives restart) after the first 429.
     state = SqlAlchemyObservationRepository().coverage_for("wikipedia", "demand_signal")
     assert state is not None and state["sync_status"] == "rate_limited"
+    # Wikipedia fails fast: exactly one HTTP request (max_attempts=1), then the
+    # source is disabled for the remaining 19 routes — no per-pair storm.
+    assert len(session.calls) == conn.max_attempts == 1
+
+
+def test_demand_wikipedia_first_404_pauses_immediately(seeded_repos):
+    """A real HTTP 404 from Wikipedia's own _get is no longer swallowed by fetch();
+    the first one pauses the source at once (one network call for 20 routes)."""
+    catalog_repo, _ = seeded_repos
+    session = _Session(_Resp(404, {"detail": "no data for those dates"}))
+    conn = WikipediaDemandConnector(Settings(), session=session)
+    svc = _demand_service(catalog_repo, conn)
+
+    ctxs = [RouteContext(origin_iata=f"O{i:02d}", dest_iata=f"D{i:02d}",
+                         origin_city=f"City{i}", dest_city=f"Dest{i}") for i in range(20)]
+    svc.sync(route_contexts=ctxs)
+    # One request total, then paused persistently (surfaced as "Rate limited").
+    assert len(session.calls) == 1
+    state = SqlAlchemyObservationRepository().coverage_for("wikipedia", "demand_signal")
+    assert state is not None and state["sync_status"] == "rate_limited"
+
+
+def _one_ctx() -> list[RouteContext]:
+    return [RouteContext(origin_iata="AAA", dest_iata="BBB", origin_city="X", dest_city="Y")]
+
+
+def test_demand_wikipedia_not_started_next_sync(seeded_repos):
+    """Once paused (persisted), the NEXT sync never starts Wikipedia — no network."""
+    catalog_repo, _ = seeded_repos
+    SqlAlchemyObservationRepository().upsert_sync_state(
+        "wikipedia", "demand_signal", "Global", "rate_limited", 0
+    )
+    session = _Session(_Resp(429, {"detail": "rate limited"}))
+    conn = WikipediaDemandConnector(Settings(), session=session)
+    _demand_service(catalog_repo, conn).sync(route_contexts=_one_ctx() * 5)
+    assert len(session.calls) == 0
+
+
+def test_demand_wikipedia_pause_surfaces_amber_in_diagnostics(seeded_repos):
+    """A Wikipedia failure surfaces as an amber, provider-limited card — never a
+    raw HTTP code / "failed" / "not implemented"."""
+    catalog_repo, _ = seeded_repos
+    session = _Session(_Resp(429, {"detail": "rate limited"}))
+    conn = WikipediaDemandConnector(Settings(), session=session)
+    _demand_service(catalog_repo, conn).sync(route_contexts=_one_ctx())
+
+    repo = SqlAlchemyObservationRepository()
+    assert "wikipedia" in _svc(repo).status()["paused_sources"]
+
+    snap = {"sync": _svc(repo).status(), "demand": {"source_states": {"wikipedia": "available"}}}
+    card = {c["name"]: c for c in dg.source_statuses(snap)}["Wikipedia"]
+    assert card["emoji"] == "🟡"
+    detail = card["detail"] or ""
+    assert "HTTP" not in detail and "404" not in detail and "failed" not in detail.lower()
+
+
+def test_recent_messages_have_no_raw_http_errors(seeded_repos):
+    """Recent System Messages must not contain "HTTP 404" / "Connector wikipedia
+    failed" — only a single clean provider-limited message."""
+    from shared.logging_config import _ring_buffer, configure_logging
+
+    configure_logging("INFO")
+    catalog_repo, _ = seeded_repos
+    session = _Session(_Resp(404, {"detail": "no data for those dates"}))
+    conn = WikipediaDemandConnector(Settings(), session=session)
+    svc = _demand_service(catalog_repo, conn)
+
+    start = len(_ring_buffer)
+    svc.sync(route_contexts=_one_ctx() * 5)
+    new_warnings = [r.getMessage() for r in list(_ring_buffer)[start:] if r.levelno >= logging.WARNING]
+
+    assert not any("HTTP 404" in m or "Connector wikipedia failed" in m for m in new_warnings)
+    assert any("provider rate limit reached" in m.lower() for m in new_warnings)
+
+
+def test_resume_reactivates_wikipedia(seeded_repos):
+    """Resume paused sources clears the persisted pause; the next sync starts
+    Wikipedia again (READY state) — the only way back, same as AirLabs."""
+    repo = SqlAlchemyObservationRepository()
+    repo.upsert_sync_state("wikipedia", "demand_signal", "Global", "rate_limited", 0)
+    assert _svc(repo).resume_paused_sources() >= 1
+    assert repo.coverage_for("wikipedia", "demand_signal")["sync_status"] != "rate_limited"
+
+    catalog_repo, _ = seeded_repos
+    session = _Session(_Resp(404, {"detail": "no data"}))
+    conn = WikipediaDemandConnector(Settings(), session=session)
+    _demand_service(catalog_repo, conn).sync(route_contexts=_one_ctx())
+    # No longer disabled → Wikipedia was started again (then re-pauses on its 404).
+    assert len(session.calls) >= 1

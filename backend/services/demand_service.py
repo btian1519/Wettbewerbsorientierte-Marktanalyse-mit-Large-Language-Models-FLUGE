@@ -20,14 +20,13 @@ from backend.services.catalog_service import CatalogService
 from database.repository.demand_repo import SqlAlchemyDemandRepository
 from database.repository.observation_repo import SqlAlchemyObservationRepository
 from ingestion.calibration import CalibrationContext, CalibrationLayer
-from ingestion.connectors.base import ConnectorError
 from ingestion.demand.base import DemandConnector
 from ingestion.demand.model import DemandModel, RuleBasedDemandModelV1
 from ingestion.demand.records import RawSignal, RouteContext, WeeklyDemand
 from ingestion.normalization.demand_normalizer import build_signal_scores
 from shared.config import Settings, get_settings
 from shared.logging_config import get_logger
-from shared.rate_limit import RATE_LIMIT_STATUS, looks_rate_limited
+from shared.rate_limit import RATE_LIMIT_STATUS
 from shared.utils import haversine_km
 
 log = get_logger("backend.demand_service")
@@ -36,12 +35,6 @@ log = get_logger("backend.demand_service")
 # persisted (kept separate from the aggregate "demand" run state so pausing one
 # signal source never blocks the others).
 _DEMAND_SIGNAL_CATEGORY = "demand_signal"
-
-# Consecutive failures of a single demand connector before it is skipped for the
-# rest of the current run (protects against non-rate-limit error storms, e.g. a
-# systematic HTTP 404). In-run only — not persisted, so it is retried next run.
-_DEMAND_FAILURE_LIMIT = 3
-
 
 def current_iso_week() -> str:
     iso = datetime.now(timezone.utc).isocalendar()
@@ -52,6 +45,11 @@ def _source_key(connector) -> str:
     """Stable data-source identifier for a demand connector (falls back to type)."""
     source = getattr(connector, "source", None)
     return getattr(source, "value", None) or getattr(connector, "signal_type", "unknown")
+
+
+def _source_label(source_value: str) -> str:
+    """Human-friendly source name for operator messages ('wikipedia' → 'Wikipedia')."""
+    return source_value.replace("_", " ").title()
 
 
 @dataclass
@@ -159,27 +157,26 @@ class DemandService:
         result = DemandSyncResult(week=week, status="running")
         try:
             contexts = route_contexts if route_contexts is not None else self._market_route_contexts()
-            # Per-connector circuit breaker (stops hammering a broken source):
-            #  * connectors paused by an earlier failure are skipped from the start —
-            #    the pause is persisted in sync_state and survives restarts (see
-            #    _paused_demand_sources / _pause_demand_source), i.e. it is the
-            #    default again at the next start until resumed from Diagnostics;
-            #  * a provider limit (429/quota) pauses the source immediately;
-            #  * ANY other error (e.g. repeated HTTP 404) that recurs
-            #    ``_DEMAND_FAILURE_LIMIT`` times — whether raised by fetch() or
-            #    swallowed internally and surfaced via the connector's circuit — also
-            #    pauses the source persistently. All demand failures thus converge on
-            #    the same paused ("rate limited") state.
+            # Unified provider-state machine — identical to the supply/AirLabs path:
+            #
+            #   READY → first failure → RATE_LIMITED (persisted in sync_state)
+            #         → skipped on every later sync → "Resume paused sources" → READY
+            #
+            # We deliberately do NOT try to tell a "real" 429 apart from a 404,
+            # timeout or any other error: for the application (and the investor-facing
+            # diagnostics) any failure to retrieve data means the source is
+            # *temporarily provider-limited*. The FIRST failure pauses the source at
+            # once — no retry storm against the API, no per-request error logs — and
+            # the sync continues immediately with the remaining sources.
             disabled = self._paused_demand_sources()
-            # Arm each connector's request-level circuit breaker for this run, so a
-            # source that fails internally (e.g. fetch() swallows a 404 per city and
-            # returns []) still stops hitting the network after a few failures.
-            for conn in self._connectors:
-                reset = getattr(conn, "reset_circuit", None)
-                if reset is not None:
-                    reset()
-                    conn.circuit_breaker_threshold = _DEMAND_FAILURE_LIMIT
-            fail_streak: dict[str, int] = {}
+            if disabled:
+                # Parity with the supply path's "Skipping <source> — paused after an
+                # earlier provider limit." message: a persisted pause means these
+                # sources are not touched this run (no network, no request logs).
+                log.info(
+                    "Skipping demand source(s) paused after provider limit: %s",
+                    ", ".join(sorted(_source_label(s) for s in disabled)),
+                )
             signals: list[RawSignal] = []
             for ctx in contexts:
                 for conn in self._connectors:
@@ -188,30 +185,18 @@ class DemandService:
                         continue
                     try:
                         signals.extend(conn.fetch(ctx, week))
-                        fail_streak[src] = 0  # a clean call resets the streak
-                        # fetch() may swallow internal request failures and just
-                        # return []; if enough of those tripped the connector's
-                        # circuit, treat the source as down and pause it persistently.
-                        if getattr(conn, "is_circuit_open", lambda: False)():
-                            self._pause_demand_source(src)
-                            disabled.add(src)
-                            log.warning("Demand source %s failing repeatedly — paused (persisted; "
-                                        "survives restart, resume from Diagnostics).", src)
-                    except ConnectorError as exc:
-                        if looks_rate_limited(str(exc)):
-                            self._pause_demand_source(src)
-                            disabled.add(src)
-                            log.warning("Demand source %s hit a provider limit — paused (persisted).", src)
-                            continue
-                        fail_streak[src] = fail_streak.get(src, 0) + 1
-                        log.warning("Demand connector %s failed for %s-%s: %s",
-                                    getattr(conn, "signal_type", "?"), ctx.origin_iata,
-                                    ctx.dest_iata, exc)
-                        if fail_streak[src] >= _DEMAND_FAILURE_LIMIT:
-                            self._pause_demand_source(src)
-                            disabled.add(src)
-                            log.warning("Demand source %s failed %d times in a row — paused "
-                                        "(persisted; survives restart).", src, fail_streak[src])
+                    except Exception:  # noqa: BLE001 — ANY problem ⇒ provider-limited
+                        # First strike: pause immediately + persistently, disable for
+                        # the rest of THIS run, and surface exactly one clean,
+                        # non-technical message (no HTTP codes / stack traces) for the
+                        # "Recent System Messages" panel.
+                        self._pause_demand_source(src)
+                        disabled.add(src)
+                        log.warning(
+                            "%s provider rate limit reached — data temporarily "
+                            "unavailable; paused (persists until resumed).",
+                            _source_label(src),
+                        )
             result.signals = len(signals)
             result.normalized = self.compute_from_signals(signals, week=week)
             result.status = "success" if signals else "skipped"

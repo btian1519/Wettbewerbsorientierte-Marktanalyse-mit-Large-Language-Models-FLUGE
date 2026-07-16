@@ -81,6 +81,11 @@ class BaseConnector:
     #: stops error storms even when the caller swallows individual failures. 0
     #: disables the breaker (default), so connectors opt in explicitly.
     circuit_breaker_threshold: int = 0
+    #: When True, per-request failures (HTTP 429/4xx/5xx, timeouts) are logged at
+    #: DEBUG instead of WARNING/ERROR. Connectors whose transient provider limits are
+    #: surfaced upstream as a single clean "provider limited" state opt in, so the raw
+    #: HTTP errors never reach the operator log / the "Recent System Messages" panel.
+    quiet_failures: bool = False
 
     def __init__(self, settings: Settings | None = None, session: requests.Session | None = None) -> None:
         self._settings = settings or get_settings()
@@ -151,7 +156,10 @@ class BaseConnector:
                 raise TransientError(str(exc)) from exc
 
             if resp.status_code == 429:
-                self._log.warning("Rate limited by %s (429)", self.source.value)
+                if self.quiet_failures:
+                    self._log.debug("Rate limited by %s (429)", self.source.value)
+                else:
+                    self._log.warning("Rate limited by %s (429)", self.source.value)
                 raise RateLimitError(f"{self.source.value}: HTTP 429")
             if resp.status_code in (401, 403):
                 raise AuthError(f"{self.source.value}: HTTP {resp.status_code}")
@@ -176,12 +184,20 @@ class BaseConnector:
             if self.circuit_breaker_threshold and self._consecutive_failures >= self.circuit_breaker_threshold:
                 if not self._circuit_open:
                     self._circuit_open = True
-                    self._log.error(
-                        "Connector %s failing repeatedly — opening circuit after %d failures; "
-                        "further requests are skipped until reset.",
-                        self.source.value, self._consecutive_failures,
-                    )
+                    if self.quiet_failures:
+                        self._log.debug(
+                            "Connector %s failing repeatedly — opening circuit after %d failures.",
+                            self.source.value, self._consecutive_failures,
+                        )
+                    else:
+                        self._log.error(
+                            "Connector %s failing repeatedly — opening circuit after %d failures; "
+                            "further requests are skipped until reset.",
+                            self.source.value, self._consecutive_failures,
+                        )
                 # Circuit just opened (or already open): suppress the per-request log.
+            elif self.quiet_failures:
+                self._log.debug("Connector %s failed: %s", self.source.value, exc)
             else:
                 self._log.error("Connector %s failed: %s", self.source.value, exc)
             raise
